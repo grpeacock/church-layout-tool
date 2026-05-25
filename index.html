@@ -356,8 +356,8 @@ function setupCanvas(canvas, cssW, cssH){
 }
 setupCanvas(CV, 900, 680);
 
-function render(cfg, canvas){
-  canvas = canvas || CV;
+function render(cfg, canvas, opts){
+  canvas = canvas || CV; opts = opts || {};
   const W = canvas._w, H = canvas._h;
   const PAD = Math.max(8, Math.round(Math.min(W,H)*0.04));
   const fScale = Math.max(0.7, Math.min(1, W/900));
@@ -368,7 +368,7 @@ function render(cfg, canvas){
 
   const fw = Math.max(1, m.bounds.maxX-m.bounds.minX);
   const fh = Math.max(1, m.bounds.maxY-m.bounds.minY);
-  const s = Math.min((W-2*PAD)/fw, (H-2*PAD)/fh);
+  const s = opts.scale || Math.min((W-2*PAD)/fw, (H-2*PAD)/fh);  // opts.scale = shared (summary)
   const ox = (W - fw*s)/2, oy = (H - fh*s)/2;
   const X = x => ox + (x-m.bounds.minX)*s;
   const Y = y => oy + (y-m.bounds.minY)*s;
@@ -743,15 +743,21 @@ function renderEditCanvas(){
 function renderSummary(){
   const wrap=document.getElementById("summaryImages");
   wrap.innerHTML="";
+  // One shared scale across all tabs so footprints are visually comparable:
+  // pick the scale at which the largest footprint just fits a thumbnail.
+  const TW=420, TH=330, PAD=Math.max(8,Math.round(Math.min(TW,TH)*0.04));
+  let maxFw=1, maxFh=1;
+  state.tabs.forEach(cfg=>{ const b=buildModel(cfg).bounds; maxFw=Math.max(maxFw, b.maxX-b.minX); maxFh=Math.max(maxFh, b.maxY-b.minY); });
+  const shared=Math.min((TW-2*PAD)/maxFw, (TH-2*PAD)/maxFh);
   state.tabs.forEach((cfg,i)=>{
     const card=document.createElement("div"); card.className="sumcard"; card.title="Click to edit "+cfg.name;
-    const cv=document.createElement("canvas"); setupCanvas(cv, 420, 330);
+    const cv=document.createElement("canvas"); setupCanvas(cv, TW, TH);
     card.appendChild(cv);
     const cap=document.createElement("div"); cap.className="sumcap"; cap.textContent="✎ Edit "+cfg.name;
     card.appendChild(cap);
     card.addEventListener("click",()=>showEdit(i));
     wrap.appendChild(card);
-    render(cfg, cv);
+    render(cfg, cv, {scale:shared});
   });
   renderCompare();
 }
