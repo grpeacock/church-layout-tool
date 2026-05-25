@@ -22,20 +22,43 @@
   .tab .x:hover{color:var(--accent)}
   .btn{padding:6px 11px;border:1px solid var(--line);border-radius:7px;background:#fff;cursor:pointer;font-size:13px}
   .btn:hover{background:#f0ece3}
+  .btn.sm{padding:3px 9px;font-size:12px}
   .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.08)}
   .toolbar{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
-  main{display:grid;grid-template-columns:330px 1fr;gap:0;height:calc(100% - 0px)}
+  main{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100% - 0px)}
   .controls{padding:14px 16px;overflow:auto;border-right:1px solid var(--line);background:var(--panel)}
   .stage{padding:14px 16px;overflow:auto}
   fieldset{border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px}
   legend{font-weight:650;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px}
+  .subhead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin:11px 0 5px;border-bottom:1px dotted var(--line);padding-bottom:3px}
+  .subhead:first-child{margin-top:2px}
   .field{display:grid;grid-template-columns:1fr 84px;gap:8px;align-items:center;margin:7px 0}
   .field label{font-size:13px}
   .field input[type=number],.field input[type=text],.field select{width:100%;padding:5px 6px;border:1px solid var(--line);border-radius:6px;font:inherit}
   .field.range{grid-template-columns:1fr 64px}
   .field.range input[type=range]{width:100%}
   .field.full{grid-template-columns:1fr}
+  /* custom layout editor */
+  .custombox{margin-top:4px}
+  .dndlist{display:flex;flex-direction:column;gap:4px}
+  .dnditem{display:grid;grid-template-columns:auto auto 1fr auto auto;align-items:center;gap:6px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:#fafafa}
+  .dnditem.is-section{background:#f3e9d8;border-color:var(--tanstroke)}
+  .dnditem.is-aisle{background:#eef0f2}
+  .dnditem.dragging{opacity:.45}
+  .dnditem.over{outline:2px dashed var(--accent);outline-offset:1px}
+  .dnditem .grip{cursor:grab;color:#999;user-select:none;font-size:13px}
+  .dnditem .tag{font-size:12px;font-weight:600;min-width:52px}
+  .dnditem input{width:100%;padding:3px 5px;border:1px solid var(--line);border-radius:5px;font:inherit}
+  .dnditem .unit{font-size:11px;color:var(--muted)}
+  .dnditem .del{border:0;background:none;color:#b00;font-weight:700;cursor:pointer;font-size:15px;line-height:1}
+  .addbtns{display:flex;gap:6px;margin:7px 0 2px}
+  .cust-total{font-size:12px;color:var(--muted);margin-top:6px}
+  .cust-total .badge{padding:1px 7px;border-radius:9px;font-size:11px;margin-left:4px;white-space:nowrap}
+  .cust-total .badge.ok{background:#d8f0d8;color:#1a6b1a}
+  .cust-total .badge.over{background:#f6dcdc;color:#9b1c1c}
+  .cust-total .badge.under{background:#fdeccb;color:#8a5a00}
+  .cust-hint{font-size:11px;color:var(--muted);margin:3px 0 0;font-style:italic}
   canvas{background:#fff;border:1px solid var(--line);border-radius:10px;max-width:100%;box-shadow:0 1px 4px rgba(0,0,0,.06)}
   .stats{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
   .stat{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--panel)}
@@ -85,54 +108,53 @@
 <script>
 "use strict";
 
-/* ---------- configuration model ---------- */
+/* ====================== configuration model ====================== */
+function defaultSeating(sections){
+  return { mode:"equal", sections:sections, edgeAisle:2, centerAisle:6, nonCenterAisle:4, custom:null };
+}
 function defaultConfig(name){
   return {
     name: name || "Option A",
-    naveLength: 80, naveWidth: 40, naveSections: 2,
-    transeptLength: 24, transeptWidth: 30, transeptSections: 1, transeptDir: "toward", transeptFrontGap: 0,
+    // dimensions
+    naveLength: 80, naveWidth: 40,
+    transeptLength: 24, transeptWidth: 30, transeptDir: "toward", transeptFrontGap: 0,
+    // per-seat
     seatWidth: 1.6, seatDepth: 1.5, legSpace: 1.5,
-    centerAisle: 6, nonCenterAisle: 4, edgeAisle: 2,
+    // altar
     altarDistance: 0, altarWidth: 9, altarDepth: 4, frontToAltar: 8,
+    // seating / aisles (per area)
+    naveSeating: defaultSeating(2),
+    transeptSeating: defaultSeating(1),
   };
 }
 
-const FIELDS = [
-  {g:"Nave", k:"naveLength", l:"Nave length", t:"num", min:0, step:1},
-  {g:"Nave", k:"naveWidth", l:"Nave width", t:"num", min:0, step:1},
-  {g:"Nave", k:"naveSections", l:"Nave sections", t:"num", min:1, step:1, int:true},
+// metadata for the simple numeric top-level fields
+const NUM = {
+  naveLength:{l:"Nave length", min:0, step:1},
+  naveWidth:{l:"Nave width", min:0, step:1, affectsTarget:true},
+  transeptLength:{l:"Transept length (per arm)", min:0, step:1, affectsTarget:true},
+  transeptWidth:{l:"Transept width (depth)", min:0, step:1, affectsTarget:true},
+  transeptFrontGap:{l:"Transept front-row setback from E wall (Forward)", min:0, step:0.5},
+  seatWidth:{l:"Seat width", min:0.1, step:0.1},
+  seatDepth:{l:"Seat depth", min:0.1, step:0.1},
+  legSpace:{l:"Leg space (front)", min:0, step:0.1},
+  altarDistance:{l:"Altar dist. from crossing center", min:0, max:60, step:0.5, range:true},
+  altarWidth:{l:"Altar width", min:0, step:0.5},
+  altarDepth:{l:"Altar depth", min:0, step:0.5},
+  frontToAltar:{l:"Front nave row → altar", min:0, step:0.5},
+};
+const SIMPLE_NUM_KEYS = Object.keys(NUM);
 
-  {g:"Transept", k:"transeptLength", l:"Transept length (per arm)", t:"num", min:0, step:1},
-  {g:"Transept", k:"transeptWidth", l:"Transept width (depth)", t:"num", min:0, step:1},
-  {g:"Transept", k:"transeptSections", l:"Transept sections (per arm)", t:"num", min:1, step:1, int:true},
-  {g:"Transept", k:"transeptDir", l:"Transept seat direction", t:"sel",
-    opts:[["forward","Forward (face altar end)"],["toward","Toward crossing"],["angled","Angled at altar"]]},
-  {g:"Transept", k:"transeptFrontGap", l:"Transept front-row setback from E wall (Forward)", t:"num", min:0, step:0.5},
-
-  {g:"Per-seat", k:"seatWidth", l:"Seat width", t:"num", min:0.1, step:0.1},
-  {g:"Per-seat", k:"seatDepth", l:"Seat depth", t:"num", min:0.1, step:0.1},
-  {g:"Per-seat", k:"legSpace", l:"Leg space (front)", t:"num", min:0, step:0.1},
-
-  {g:"Aisles", k:"centerAisle", l:"Center aisle (even #)", t:"num", min:0, step:0.5},
-  {g:"Aisles", k:"nonCenterAisle", l:"Between-section aisle", t:"num", min:0, step:0.5},
-  {g:"Aisles", k:"edgeAisle", l:"Edge aisle (by walls)", t:"num", min:0, step:0.5},
-
-  {g:"Altar", k:"altarDistance", l:"Altar dist. from crossing center", t:"range", min:0, max:60, step:0.5},
-  {g:"Altar", k:"altarWidth", l:"Altar width", t:"num", min:0, step:0.5},
-  {g:"Altar", k:"altarDepth", l:"Altar depth", t:"num", min:0, step:0.5},
-  {g:"Altar", k:"frontToAltar", l:"Front nave row → altar", t:"num", min:0, step:0.5},
-];
-const GROUP_ORDER = ["Nave","Transept","Per-seat","Aisles","Altar"];
-
-/* ---------- state ---------- */
+/* ====================== state ====================== */
 const state = { tabs: [], active: 0 };
+let dragState = null;  // { key, from } during a drag-reorder
 
-/* ---------- geometry helpers ---------- */
-// Divide a span of total length L into n equal seat-sections separated by aisles.
-// Returns {segs:[{start,size}], size, aisleSum}. Center aisle only used when n is even.
+/* ====================== geometry helpers ====================== */
+// Divide a span L into n equal seat-sections separated by aisles (Equal mode).
+// edgeStart/edgeEnd are the wall-side gaps; edgeEnd defaults to edgeStart.
 function layoutSections(L, n, centerA, nonCenterA, edgeStart, edgeEnd){
   n = Math.max(1, Math.round(n));
-  if (edgeEnd == null) edgeEnd = edgeStart;   // symmetric edge aisles by default
+  if (edgeEnd == null) edgeEnd = edgeStart;
   let inter = 0;
   if (n > 1){
     if (n % 2 === 0) inter = centerA + nonCenterA * (n - 2);
@@ -152,52 +174,56 @@ function layoutSections(L, n, centerA, nonCenterA, edgeStart, edgeEnd){
   }
   return {segs, size, inter};
 }
+// Equal-mode section segments for a seating config over available length L.
+function sectionsEqual(s, L, edgeStart, edgeEnd){
+  return layoutSections(L, Math.max(1,Math.round(s.sections)), +s.centerAisle, +s.nonCenterAisle, +edgeStart, +edgeEnd).segs;
+}
+// Custom-mode section segments (aisles are implicit gaps), anchored at 0.
+function sectionsCustom(list){
+  const segs = []; let pos = 0;
+  for (const it of (list||[])){
+    const w = Math.max(0, +it.width || 0);
+    if (it.type === "section") segs.push({start:pos, size:w});
+    pos += w;
+  }
+  return {segs, total:pos};
+}
 
 function rot(pt, piv, a){
   const c=Math.cos(a), s=Math.sin(a);
   const dx=pt.x-piv.x, dy=pt.y-piv.y;
   return {x:piv.x + dx*c - dy*s, y:piv.y + dx*s + dy*c};
 }
-
-// Build a bar from anchor a, along the seat-axis (unit ax) for length span,
-// and depth-axis (unit dx) for depth. seats = seats in this bar.
 function makeBar(ax0, ay0, axx, axy, dxx, dxy, seats){
-  const a={x:ax0, y:ay0};
-  const b={x:ax0+axx, y:ay0+axy};
-  const c={x:ax0+axx+dxx, y:ay0+axy+dxy};
-  const d={x:ax0+dxx, y:ay0+dxy};
-  return {a,b,c,d,seats};
+  return {
+    a:{x:ax0, y:ay0}, b:{x:ax0+axx, y:ay0+axy},
+    c:{x:ax0+axx+dxx, y:ay0+axy+dxy}, d:{x:ax0+dxx, y:ay0+dxy}, seats
+  };
 }
 
-/* ---------- core model ---------- */
+/* ====================== core model ====================== */
 function buildModel(cfg){
   const nw=+cfg.naveWidth, nl=+cfg.naveLength;
   const tw=+cfg.transeptWidth, tl=+cfg.transeptLength;
   const sW=+cfg.seatWidth, sD=+cfg.seatDepth, leg=+cfg.legSpace;
   const pitch = sD + leg;
-  const cA=+cfg.centerAisle, ncA=+cfg.nonCenterAisle, eA=+cfg.edgeAisle;
-  const nSec=Math.max(1,Math.round(cfg.naveSections));
-  const tSec=Math.max(1,Math.round(cfg.transeptSections));
   const dir = cfg.transeptDir;
+  const NS = cfg.naveSeating, TS = cfg.transeptSeating;
 
   const cx=0, cy=0;
   const halfNW=nw/2, halfTW=tw/2;
 
-  // altar
   const d=+cfg.altarDistance;
   const altar={cx:cx, cy:cy-d, w:+cfg.altarWidth, h:+cfg.altarDepth};
-  const altarFrontY = altar.cy + altar.h/2;   // edge facing the nave (downward)
+  const altarFrontY = altar.cy + altar.h/2;
   const altarTopY   = altar.cy - altar.h/2;
-  // chancel auto-extends behind the altar
   const behind = Math.max(+cfg.altarDepth, 6);
   const chancelTopY = Math.min(cy - halfTW, altarTopY - behind);
 
-  // overall extents
   const xL = cx - halfNW - tl, xR = cx + halfNW + tl;
   const naveBottom = cy + halfTW + nl;
   const bounds = {minX:xL, maxX:xR, minY:chancelTopY, maxY:naveBottom};
 
-  // cross outline (clockwise)
   const outline = [
     {x:cx-halfNW, y:chancelTopY}, {x:cx+halfNW, y:chancelTopY},
     {x:cx+halfNW, y:cy-halfTW},   {x:xR,        y:cy-halfTW},
@@ -208,111 +234,104 @@ function buildModel(cfg){
   ];
 
   const bars = [];
+  const segSeats = (size)=> Math.floor(size/sW + 1e-9);
+  const sumSeats = (segs)=> segs.reduce((a,s)=> a + Math.max(0, segSeats(s.size)), 0);
 
-  /* ----- NAVE (faces up toward altar): seat-axis +x, depth +y ----- */
+  /* ----- NAVE (faces altar): seat-axis +x, depth +y ----- */
   const naveLeft = cx - halfNW;
-  // front row is placed purely by its distance from the altar; this may place
-  // front rows inside the crossing (no clamp to the crossing edge).
+  // front row placed purely by distance from altar (may sit inside the crossing).
   const frontRowTopY = altarFrontY + (+cfg.frontToAltar || 0);
   const naveRows = Math.max(0, Math.floor((naveBottom - frontRowTopY) / pitch + 1e-9));
-  const naveLay = layoutSections(nw, nSec, cA, ncA, eA);
-  const naveSeatsPerSec = Math.floor(naveLay.size / sW + 1e-9);
-  const naveSeatsPerRow = naveSeatsPerSec * nSec;
+  const naveSegs = (NS.mode==="custom" && Array.isArray(NS.custom))
+    ? sectionsCustom(NS.custom).segs
+    : sectionsEqual(NS, nw, NS.edgeAisle, NS.edgeAisle);
   for (let r=0;r<naveRows;r++){
     const y0 = frontRowTopY + r*pitch;
-    for (const seg of naveLay.segs){
-      if (naveSeatsPerSec<=0) continue;
-      bars.push(makeBar(naveLeft+seg.start, y0, seg.size,0, 0,sD, naveSeatsPerSec));
+    for (const seg of naveSegs){
+      const seats = segSeats(seg.size); if (seats<=0) continue;
+      bars.push(makeBar(naveLeft+seg.start, y0, seg.size,0, 0,sD, seats));
     }
   }
+  const naveSeatsPerRow = sumSeats(naveSegs);
+  const naveSecCount = naveSegs.length;
+  const naveTotal = naveSeatsPerRow * naveRows;
 
   /* ----- TRANSEPTS ----- */
-  let tRows=0, tSeatsPerSec=0, tSeatsPerRow=0;
-  const armBars=[];
+  let tRows=0, tSeatsPerRow=0, tSecCount=0;
   if (dir === "forward"){
-    // faces up: seat-axis +x along arm length, depth +y across transept width.
-    // gap pulls the front row back from the liturgical-east (altar-side, top) wall.
+    // faces altar end; gap pulls front row off the liturgical-east (top) wall.
     const gap = Math.max(0, +cfg.transeptFrontGap || 0);
     tRows = Math.max(0, Math.floor((tw - gap) / pitch + 1e-9));
-    // No edge aisle on the crossing side (the nave already provides that clearance).
-    // The left arm's crossing side is its high-x end; the right arm's is its low-x end.
-    const leftLay  = layoutSections(tl, tSec, cA, ncA, eA, 0);
-    const rightLay = layoutSections(tl, tSec, cA, ncA, 0, eA);
-    tSeatsPerSec = Math.floor(leftLay.size / sW + 1e-9);
-    tSeatsPerRow = tSeatsPerSec * tSec;
-    const arms=[{base:xL, lay:leftLay}, {base:cx+halfNW, lay:rightLay}];
-    for (const arm of arms){
+    let leftSegs, rightSegs;
+    if (TS.mode==="custom" && Array.isArray(TS.custom)){
+      const segs = sectionsCustom(TS.custom).segs;            // anchored from each outer wall, mirrored
+      leftSegs  = segs.map(s=>({size:s.size, world:xL + s.start}));
+      rightSegs = segs.map(s=>({size:s.size, world:xR - s.start - s.size}));
+    } else {
+      // Equal: no edge aisle on the crossing side (nave already provides clearance).
+      leftSegs  = sectionsEqual(TS, tl, TS.edgeAisle, 0).map(s=>({size:s.size, world:xL + s.start}));
+      rightSegs = sectionsEqual(TS, tl, 0, TS.edgeAisle).map(s=>({size:s.size, world:(cx+halfNW) + s.start}));
+    }
+    for (const segs of [leftSegs, rightSegs]){
       for (let r=0;r<tRows;r++){
         const y0 = (cy-halfTW) + gap + r*pitch;
-        for (const seg of arm.lay.segs){
-          if (tSeatsPerSec<=0) continue;
-          armBars.push(makeBar(arm.base+seg.start, y0, seg.size,0, 0,sD, tSeatsPerSec));
+        for (const seg of segs){
+          const seats = segSeats(seg.size); if (seats<=0) continue;
+          bars.push(makeBar(seg.world, y0, seg.size,0, 0,sD, seats));
         }
       }
     }
+    tSeatsPerRow = sumSeats(leftSegs);
+    tSecCount = leftSegs.length;
   } else {
     // toward crossing (and angled = toward + rotation): depth along arm length, seat-axis +y
     tRows = Math.max(0, Math.floor(tl / pitch + 1e-9));
-    const lay = layoutSections(tw, tSec, cA, ncA, eA);
-    tSeatsPerSec = Math.floor(lay.size / sW + 1e-9);
-    tSeatsPerRow = tSeatsPerSec * tSec;
-
-    // LEFT arm: faces +x (toward crossing). front row at inner edge (x=cx-halfNW), rows go outward (-x)
-    const leftBars=[];
+    const segs = (TS.mode==="custom" && Array.isArray(TS.custom))
+      ? sectionsCustom(TS.custom).segs
+      : sectionsEqual(TS, tw, TS.edgeAisle, TS.edgeAisle);
+    const leftBars=[], rightBars=[];
     for (let r=0;r<tRows;r++){
-      const xRight = (cx-halfNW) - r*pitch;
-      const xLeft = xRight - sD;
-      for (const seg of lay.segs){
-        if (tSeatsPerSec<=0) continue;
-        leftBars.push(makeBar(xLeft, (cy-halfTW)+seg.start, 0,seg.size, sD,0, tSeatsPerSec));
-      }
-    }
-    // RIGHT arm: faces -x. front at inner edge (x=cx+halfNW), rows go outward (+x)
-    const rightBars=[];
-    for (let r=0;r<tRows;r++){
-      const xLeft = (cx+halfNW) + r*pitch;
-      for (const seg of lay.segs){
-        if (tSeatsPerSec<=0) continue;
-        rightBars.push(makeBar(xLeft, (cy-halfTW)+seg.start, 0,seg.size, sD,0, tSeatsPerSec));
+      const xRightL = (cx-halfNW) - r*pitch, xLeftL = xRightL - sD;
+      const xLeftR  = (cx+halfNW) + r*pitch;
+      for (const seg of segs){
+        const seats = segSeats(seg.size); if (seats<=0) continue;
+        leftBars.push (makeBar(xLeftL, (cy-halfTW)+seg.start, 0,seg.size, sD,0, seats));
+        rightBars.push(makeBar(xLeftR, (cy-halfTW)+seg.start, 0,seg.size, sD,0, seats));
       }
     }
     if (dir === "angled"){
-      const pivL={x:cx-halfNW, y:cy};
-      const angL=Math.atan2(altar.cy-pivL.y, altar.cx-pivL.x); // toward-layout faces +x (angle 0)
-      const pivR={x:cx+halfNW, y:cy};
-      const angR=Math.atan2(altar.cy-pivR.y, altar.cx-pivR.x) - Math.PI; // toward-layout faces -x (angle π)
-      for (const bar of leftBars){ bar.a=rot(bar.a,pivL,angL); bar.b=rot(bar.b,pivL,angL); bar.c=rot(bar.c,pivL,angL); bar.d=rot(bar.d,pivL,angL); }
-      for (const bar of rightBars){ bar.a=rot(bar.a,pivR,angR); bar.b=rot(bar.b,pivR,angR); bar.c=rot(bar.c,pivR,angR); bar.d=rot(bar.d,pivR,angR); }
+      const pivL={x:cx-halfNW, y:cy}, angL=Math.atan2(altar.cy-pivL.y, altar.cx-pivL.x);
+      const pivR={x:cx+halfNW, y:cy}, angR=Math.atan2(altar.cy-pivR.y, altar.cx-pivR.x) - Math.PI;
+      for (const b of leftBars){  b.a=rot(b.a,pivL,angL); b.b=rot(b.b,pivL,angL); b.c=rot(b.c,pivL,angL); b.d=rot(b.d,pivL,angL); }
+      for (const b of rightBars){ b.a=rot(b.a,pivR,angR); b.b=rot(b.b,pivR,angR); b.c=rot(b.c,pivR,angR); b.d=rot(b.d,pivR,angR); }
     }
-    armBars.push(...leftBars, ...rightBars);
+    bars.push(...leftBars, ...rightBars);
+    tSeatsPerRow = sumSeats(segs);
+    tSecCount = segs.length;
   }
-  bars.push(...armBars);
 
-  const naveTotal = naveSeatsPerRow * naveRows;
   const armTotal = tSeatsPerRow * tRows;
   const transeptTotal = armTotal * 2;
   const total = naveTotal + transeptTotal;
 
   const stats = {
     total,
-    naveRows, naveSeatsPerRow, naveTotal, naveSec:nSec,
-    tRows, tSeatsPerRow, armTotal, transeptTotal, tSec,
+    naveRows, naveSeatsPerRow, naveTotal, naveSec:naveSecCount,
+    tRows, tSeatsPerRow, armTotal, transeptTotal, tSec:tSecCount,
     totalRows: naveRows + 2*tRows,
     footW: xR - xL, footH: naveBottom - chancelTopY,
   };
-
   return {outline, altar, bars, bounds, stats};
 }
 
-/* ---------- rendering ---------- */
+/* ====================== rendering ====================== */
 const CV = document.getElementById("cv");
 const DPR = window.devicePixelRatio || 1;
 const CW = 900, CH = 680, PAD = 28;
-function setupCanvas(){
+(function setupCanvas(){
   CV.width = CW*DPR; CV.height = CH*DPR;
   CV.style.width = CW+"px"; CV.style.height = CH+"px";
-}
-setupCanvas();
+})();
 
 function render(cfg){
   const m = buildModel(cfg);
@@ -326,17 +345,14 @@ function render(cfg){
   const ox = (CW - fw*s)/2, oy = (CH - fh*s)/2;
   const X = x => ox + (x-m.bounds.minX)*s;
   const Y = y => oy + (y-m.bounds.minY)*s;
-
   const poly = (pts) => { ctx.beginPath(); pts.forEach((p,i)=> i? ctx.lineTo(X(p.x),Y(p.y)) : ctx.moveTo(X(p.x),Y(p.y))); ctx.closePath(); };
 
-  // walls: white fill + black outline
   poly(m.outline);
   ctx.fillStyle="#fff"; ctx.fill();
   ctx.save();
-  // clip to interior so seats never spill across walls
   poly(m.outline); ctx.clip();
 
-  // seat rows
+  const tan = getCss("--tan"), tanStroke = getCss("--tanstroke");
   ctx.lineWidth = 1;
   for (const bar of m.bars){
     ctx.beginPath();
@@ -345,11 +361,8 @@ function render(cfg){
     ctx.lineTo(X(bar.c.x),Y(bar.c.y));
     ctx.lineTo(X(bar.d.x),Y(bar.d.y));
     ctx.closePath();
-    ctx.fillStyle = getCss("--tan");
-    ctx.fill();
-    ctx.strokeStyle = getCss("--tanstroke");
-    ctx.stroke();
-    // seat divisions along a->b
+    ctx.fillStyle = tan; ctx.fill();
+    ctx.strokeStyle = tanStroke; ctx.stroke();
     if (bar.seats>1 && s*dist(bar.a,bar.b)/bar.seats > 3){
       ctx.beginPath();
       for (let i=1;i<bar.seats;i++){
@@ -363,21 +376,17 @@ function render(cfg){
   }
   ctx.restore();
 
-  // altar (drawn over seats)
   const a=m.altar;
   ctx.fillStyle=getCss("--accent");
   ctx.fillRect(X(a.cx-a.w/2), Y(a.cy-a.h/2), a.w*s, a.h*s);
 
-  // re-stroke walls crisply on top
   poly(m.outline);
   ctx.lineWidth=2.5; ctx.strokeStyle="#000"; ctx.stroke();
 
-  // labels
   ctx.fillStyle="#000"; ctx.font="600 14px system-ui,Segoe UI,Arial";
   ctx.fillText(cfg.name, 12, 22);
   ctx.font="12px system-ui,Segoe UI,Arial"; ctx.fillStyle="#555";
   ctx.fillText(`${m.stats.total} seats · ${Math.round(m.stats.footW)}′ × ${Math.round(m.stats.footH)}′`, 12, 40);
-  // altar tag
   ctx.fillStyle=getCss("--accent"); ctx.font="600 11px system-ui,Arial"; ctx.textAlign="center";
   ctx.fillText("ALTAR", X(a.cx), Y(a.cy-a.h/2)-4);
   ctx.textAlign="left";
@@ -387,7 +396,7 @@ function render(cfg){
 function dist(p,q){return Math.hypot(p.x-q.x,p.y-q.y);}
 function getCss(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
 
-/* ---------- stats panel + comparison table ---------- */
+/* ====================== stats + comparison ====================== */
 function renderStats(stats){
   const el=document.getElementById("stats");
   const cell=(v,k,big)=>`<div class="stat ${big?'big':''}"><div class="v">${v}</div><div class="k">${k}</div></div>`;
@@ -395,13 +404,12 @@ function renderStats(stats){
     cell(stats.total, "Total seats", true) +
     cell(stats.naveTotal, `Nave total (${stats.naveSeatsPerRow}/row × ${stats.naveRows} rows)`) +
     cell(stats.transeptTotal, `Transepts total (both arms)`) +
-    cell(stats.naveSeatsPerRow, `Seats per nave row · ${stats.naveSec} section${stats.naveSec>1?'s':''}`) +
-    cell(stats.tSeatsPerRow, `Seats per transept row · ${stats.tSec} section${stats.tSec>1?'s':''}`) +
+    cell(stats.naveSeatsPerRow, `Seats per nave row · ${stats.naveSec} section${stats.naveSec===1?'':'s'}`) +
+    cell(stats.tSeatsPerRow, `Seats per transept row · ${stats.tSec} section${stats.tSec===1?'':'s'}`) +
     cell(stats.tRows, `Transept rows (per arm)`) +
     cell(stats.armTotal, `Seats per transept arm`) +
     cell(stats.totalRows, `Total rows (nave + both arms)`);
 }
-
 function renderCompare(){
   const t=document.getElementById("cmp");
   const rows=[
@@ -416,67 +424,219 @@ function renderCompare(){
   ];
   const stats=state.tabs.map(c=>buildModel(c).stats);
   let html="<thead><tr><th>Metric</th>"+state.tabs.map(c=>`<th>${escapeHtml(c.name)}</th>`).join("")+"</tr></thead><tbody>";
-  for(const [label,fn] of rows){
-    html+="<tr><td>"+label+"</td>"+stats.map(s=>`<td>${fn(s)}</td>`).join("")+"</tr>";
-  }
+  for(const [label,fn] of rows) html+="<tr><td>"+label+"</td>"+stats.map(s=>`<td>${fn(s)}</td>`).join("")+"</tr>";
   html+="</tbody>";
   t.innerHTML = state.tabs.length>1 ? html : "";
   t.style.display = state.tabs.length>1 ? "table" : "none";
 }
-
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 
-/* ---------- inputs ---------- */
+/* ====================== small numeric helpers ====================== */
+function numOr(v,d){ const n=+v; return Number.isFinite(n)?n:d; }
+function intOr(v,d){ const n=Math.round(+v); return Number.isFinite(n)?n:d; }
+function round1(x){ return Math.round(x*10)/10; }
+function customTotal(list){ return (list||[]).reduce((a,it)=>a+Math.max(0,+it.width||0),0); }
+function customSectionWidths(list){ return (list||[]).filter(it=>it.type==="section").map(it=>+it.width||0); }
+function customHasUnequalSections(list){
+  const ws=customSectionWidths(list);
+  for(let i=1;i<ws.length;i++) if(Math.abs(ws[i]-ws[0])>0.01) return true;
+  return false;
+}
+function newSectionWidth(s, target){ const rem=target-customTotal(s.custom); return rem>1?round1(rem):12; }
+function makeCustomFromEqual(s, target){
+  const n=Math.max(1,Math.round(s.sections));
+  const lay=layoutSections(target, n, +s.centerAisle, +s.nonCenterAisle, +s.edgeAisle);
+  const size = lay.size>0 ? lay.size : Math.max(1, round1(target/(n*2)));
+  const list=[];
+  if (+s.edgeAisle>0) list.push({type:"aisle", width:round1(+s.edgeAisle)});
+  for (let i=0;i<n;i++){
+    list.push({type:"section", width:round1(size)});
+    if (i<n-1){
+      const isCenter=(n%2===0)&&(i===n/2-1);
+      list.push({type:"aisle", width:round1(isCenter?+s.centerAisle:+s.nonCenterAisle)});
+    }
+  }
+  if (+s.edgeAisle>0) list.push({type:"aisle", width:round1(+s.edgeAisle)});
+  return list;
+}
+
+/* ====================== controls ====================== */
+function fieldset(title){ const fs=document.createElement("fieldset"); const lg=document.createElement("legend"); lg.textContent=title; fs.appendChild(lg); return fs; }
+function subheading(t){ const d=document.createElement("div"); d.className="subhead"; d.textContent=t; return d; }
+
+function numField(obj, key, meta){
+  const row=document.createElement("div"); row.className="field";
+  row.innerHTML=`<label>${meta.l}</label><input type="number" value="${obj[key]}" step="${meta.step}" ${meta.min!=null?`min="${meta.min}"`:""}>`;
+  const inp=row.querySelector("input");
+  inp.addEventListener("input",()=>{ let v=+inp.value; if(meta.int) v=Math.round(v); obj[key]=v; refresh(); });
+  if (meta.affectsTarget) inp.addEventListener("change",()=>buildControls()); // refresh target badge on blur
+  return row;
+}
+function rangeField(obj, key, meta){
+  const row=document.createElement("div"); row.className="field range";
+  row.innerHTML=`<label>${meta.l}</label><input type="number" value="${obj[key]}" step="${meta.step}" min="${meta.min}">`;
+  const num=row.querySelector("input");
+  const sl=document.createElement("input"); sl.type="range"; sl.min=meta.min; sl.max=meta.max; sl.step=meta.step; sl.value=obj[key]; sl.style.gridColumn="1 / -1";
+  sl.addEventListener("input",()=>{ obj[key]=+sl.value; num.value=sl.value; refresh(); });
+  num.addEventListener("input",()=>{ obj[key]=+num.value; sl.value=num.value; refresh(); });
+  row.appendChild(sl); return row;
+}
+function selectField(obj, key, label, opts, onChange){
+  const row=document.createElement("div"); row.className="field";
+  row.innerHTML=`<label>${label}</label><select>`+opts.map(o=>`<option value="${o[0]}" ${obj[key]===o[0]?"selected":""}>${o[1]}</option>`).join("")+`</select>`;
+  row.querySelector("select").addEventListener("change",e=>{ if(onChange) onChange(e.target.value); else { obj[key]=e.target.value; refresh(); } });
+  return row;
+}
+
 function buildControls(){
   const cfg = state.tabs[state.active];
   const wrap = document.getElementById("controls");
   wrap.innerHTML="";
 
-  // name field
-  const nameFs=document.createElement("fieldset");
-  nameFs.innerHTML=`<legend>Tab</legend>
-    <div class="field full"><input type="text" id="f_name" value="${escapeHtml(cfg.name)}" /></div>`;
-  wrap.appendChild(nameFs);
-  nameFs.querySelector("#f_name").addEventListener("input", e=>{ cfg.name=e.target.value; buildTabs(); refresh(); });
+  // tab name
+  const nameFs=fieldset("Tab");
+  const nameRow=document.createElement("div"); nameRow.className="field full";
+  nameRow.innerHTML=`<input type="text" value="${escapeHtml(cfg.name)}">`;
+  nameRow.querySelector("input").addEventListener("input",e=>{ cfg.name=e.target.value; buildTabs(); refresh(); });
+  nameFs.appendChild(nameRow); wrap.appendChild(nameFs);
 
-  for (const g of GROUP_ORDER){
-    const fs=document.createElement("fieldset");
-    const lg=document.createElement("legend"); lg.textContent=g; fs.appendChild(lg);
-    for (const f of FIELDS.filter(x=>x.g===g)){
-      fs.appendChild(buildField(cfg,f));
-    }
-    wrap.appendChild(fs);
+  // NAVE
+  const naveFs=fieldset("Nave");
+  naveFs.appendChild(subheading("Dimensions"));
+  naveFs.appendChild(numField(cfg,"naveLength",NUM.naveLength));
+  naveFs.appendChild(numField(cfg,"naveWidth",NUM.naveWidth));
+  naveFs.appendChild(subheading("Seating / Aisles"));
+  renderSeatingEditor(naveFs, cfg, "naveSeating", +cfg.naveWidth, "nave width");
+  wrap.appendChild(naveFs);
+
+  // TRANSEPT
+  const tFs=fieldset("Transept");
+  tFs.appendChild(subheading("Dimensions"));
+  tFs.appendChild(numField(cfg,"transeptLength",NUM.transeptLength));
+  tFs.appendChild(numField(cfg,"transeptWidth",NUM.transeptWidth));
+  tFs.appendChild(selectField(cfg,"transeptDir","Transept seat direction",
+    [["forward","Forward (face altar end)"],["toward","Toward crossing"],["angled","Angled at altar"]],
+    v=>{ cfg.transeptDir=v; buildControls(); refresh(); }));
+  tFs.appendChild(numField(cfg,"transeptFrontGap",NUM.transeptFrontGap));
+  tFs.appendChild(subheading("Seating / Aisles"));
+  const tForward = cfg.transeptDir==="forward";
+  renderSeatingEditor(tFs, cfg, "transeptSeating", tForward?+cfg.transeptLength:+cfg.transeptWidth, tForward?"transept length":"transept width");
+  wrap.appendChild(tFs);
+
+  // PER-SEAT
+  const sFs=fieldset("Per-seat (seats connected side-to-side)");
+  sFs.appendChild(numField(cfg,"seatWidth",NUM.seatWidth));
+  sFs.appendChild(numField(cfg,"seatDepth",NUM.seatDepth));
+  sFs.appendChild(numField(cfg,"legSpace",NUM.legSpace));
+  wrap.appendChild(sFs);
+
+  // ALTAR
+  const aFs=fieldset("Altar");
+  aFs.appendChild(rangeField(cfg,"altarDistance",NUM.altarDistance));
+  aFs.appendChild(numField(cfg,"altarWidth",NUM.altarWidth));
+  aFs.appendChild(numField(cfg,"altarDepth",NUM.altarDepth));
+  aFs.appendChild(numField(cfg,"frontToAltar",NUM.frontToAltar));
+  wrap.appendChild(aFs);
+}
+
+function renderSeatingEditor(parent, cfg, key, target, axisLabel){
+  const s = cfg[key];
+  parent.appendChild(selectField(s, "mode", "Seat Section Widths",
+    [["equal","Equal"],["custom","Custom"]],
+    v=> onSeatingModeChange(cfg, key, v, target)));
+  if (s.mode === "equal"){
+    parent.appendChild(numField(s,"sections",{l:"Sections", min:1, step:1, int:true}));
+    parent.appendChild(numField(s,"edgeAisle",{l:"Edge aisle (by walls)", min:0, step:0.5}));
+    parent.appendChild(numField(s,"centerAisle",{l:"Center aisle (even #)", min:0, step:0.5}));
+    parent.appendChild(numField(s,"nonCenterAisle",{l:"Between-section aisle", min:0, step:0.5}));
+  } else {
+    parent.appendChild(renderCustomEditor(cfg, key, target, axisLabel));
   }
 }
 
-function buildField(cfg,f){
-  const row=document.createElement("div");
-  const label=`<label for="f_${f.k}">${f.l}</label>`;
-  if (f.t==="sel"){
-    row.className="field";
-    row.innerHTML=label+`<select id="f_${f.k}">`+f.opts.map(o=>`<option value="${o[0]}" ${cfg[f.k]===o[0]?"selected":""}>${o[1]}</option>`).join("")+`</select>`;
-    row.querySelector("select").addEventListener("change",e=>{cfg[f.k]=e.target.value; refresh();});
-  } else if (f.t==="range"){
-    row.className="field range";
-    row.innerHTML=label+`<input type="number" id="f_${f.k}" value="${cfg[f.k]}" step="${f.step}" min="${f.min}" />`;
-    const slider=document.createElement("input");
-    slider.type="range"; slider.min=f.min; slider.max=f.max; slider.step=f.step; slider.value=cfg[f.k];
-    slider.style.gridColumn="1 / -1";
-    const num=row.querySelector("input[type=number]");
-    slider.addEventListener("input",e=>{cfg[f.k]=+e.target.value; num.value=e.target.value; refresh();});
-    num.addEventListener("input",e=>{cfg[f.k]=+e.target.value; slider.value=e.target.value; refresh();});
-    row.appendChild(slider);
+function onSeatingModeChange(cfg, key, v, target){
+  const s = cfg[key];
+  if (v === "custom"){
+    if (!Array.isArray(s.custom) || s.custom.length === 0) s.custom = makeCustomFromEqual(s, target);
+    s.mode = "custom";
   } else {
-    row.className="field";
-    row.innerHTML=label+`<input type="number" id="f_${f.k}" value="${cfg[f.k]}" step="${f.step}" ${f.min!=null?`min="${f.min}"`:""} />`;
-    row.querySelector("input").addEventListener("input",e=>{
-      let v=+e.target.value; if(f.int) v=Math.round(v); cfg[f.k]=v; refresh();
-    });
+    if (Array.isArray(s.custom) && customHasUnequalSections(s.custom)){
+      const okSwitch = confirm("This area's custom layout has unequal section widths.\n\nSwitching to Equal will replace them with evenly-sized sections. Continue?\n(Your custom layout is kept and restored if you switch back.)");
+      if (!okSwitch){ buildControls(); return; } // re-render keeps Custom selected
+    }
+    s.mode = "equal";
   }
+  buildControls(); refresh();
+}
+
+function renderCustomEditor(cfg, key, target, axisLabel){
+  const s = cfg[key];
+  const box = document.createElement("div"); box.className="custombox";
+
+  const totalDiv = document.createElement("div"); totalDiv.className="cust-total";
+  const updateTotal = ()=>{ totalDiv.innerHTML = totalText(customTotal(s.custom), target, axisLabel); };
+
+  const list = document.createElement("div"); list.className="dndlist";
+  s.custom.forEach((it,i)=> list.appendChild(customItemRow(cfg, key, i, updateTotal)));
+  box.appendChild(list);
+
+  const btns = document.createElement("div"); btns.className="addbtns";
+  const addSec=document.createElement("button"); addSec.className="btn sm"; addSec.textContent="+ Section";
+  addSec.addEventListener("click",()=>{ s.custom.push({type:"section", width:newSectionWidth(s,target)}); buildControls(); refresh(); });
+  const addAisle=document.createElement("button"); addAisle.className="btn sm"; addAisle.textContent="+ Aisle";
+  addAisle.addEventListener("click",()=>{ s.custom.push({type:"aisle", width:4}); buildControls(); refresh(); });
+  btns.appendChild(addSec); btns.appendChild(addAisle);
+  box.appendChild(btns);
+
+  updateTotal();
+  box.appendChild(totalDiv);
+
+  const hint=document.createElement("div"); hint.className="cust-hint";
+  hint.textContent = "Order runs across the "+axisLabel+"; drag ⋮⋮ to reorder. Transept layouts mirror to both arms.";
+  box.appendChild(hint);
+  return box;
+}
+
+function customItemRow(cfg, key, i, updateTotal){
+  const s = cfg[key]; const it = s.custom[i];
+  const row = document.createElement("div");
+  row.className = "dnditem " + (it.type==="section" ? "is-section" : "is-aisle");
+  row.innerHTML = `<span class="grip" title="Drag to reorder">⋮⋮</span>
+    <span class="tag">${it.type==="section"?"Section":"Aisle"}</span>
+    <input type="number" value="${it.width}" step="0.5" min="0">
+    <span class="unit">ft</span>
+    <button class="del" title="Remove">×</button>`;
+
+  row.querySelector("input").addEventListener("input", e=>{ it.width=+e.target.value; updateTotal(); refresh(); });
+  row.querySelector(".del").addEventListener("click", ()=>{ s.custom.splice(i,1); buildControls(); refresh(); });
+
+  const grip = row.querySelector(".grip");
+  grip.draggable = true;
+  grip.addEventListener("dragstart", e=>{ dragState={key, from:i}; row.classList.add("dragging"); e.dataTransfer.effectAllowed="move"; e.dataTransfer.setData("text/plain",String(i)); });
+  grip.addEventListener("dragend", ()=>{ row.classList.remove("dragging"); });
+  row.addEventListener("dragover", e=>{ if(dragState && dragState.key===key){ e.preventDefault(); row.classList.add("over"); } });
+  row.addEventListener("dragleave", ()=> row.classList.remove("over"));
+  row.addEventListener("drop", e=>{
+    e.preventDefault(); row.classList.remove("over");
+    if(!dragState || dragState.key!==key) return;
+    const from=dragState.from; dragState=null;
+    if(from===i) return;
+    const arr=s.custom; const [moved]=arr.splice(from,1); arr.splice(i,0,moved);
+    buildControls(); refresh();
+  });
   return row;
 }
 
-/* ---------- tabs ---------- */
+function totalText(tot, target, axisLabel){
+  const diff = tot - target;
+  let cls, note;
+  if (Math.abs(diff) < 0.05){ cls="ok"; note="matches "+axisLabel; }
+  else if (diff > 0){ cls="over"; note=round1(diff)+" ft over "+axisLabel; }
+  else { cls="under"; note=round1(-diff)+" ft under "+axisLabel; }
+  return `Layout total: <b>${round1(tot)} ft</b> · target ${round1(target)} ft <span class="badge ${cls}">${note}</span>`;
+}
+
+/* ====================== tabs ====================== */
 function buildTabs(){
   const bar=document.getElementById("tabsbar");
   bar.innerHTML="";
@@ -484,13 +644,13 @@ function buildTabs(){
     const tab=document.createElement("div");
     tab.className="tab"+(i===state.active?" active":"");
     tab.innerHTML=`<span>${escapeHtml(c.name)}</span>`;
-    tab.querySelector("span").addEventListener("click",()=>{state.active=i; buildTabs(); buildControls(); refresh();});
+    tab.querySelector("span").addEventListener("click",()=>{ state.active=i; buildTabs(); buildControls(); refresh(); });
     tab.querySelector("span").addEventListener("dblclick",()=>{
-      const n=prompt("Rename tab:",c.name); if(n!=null){c.name=n; buildTabs(); buildControls(); refresh();}
+      const n=prompt("Rename tab:",c.name); if(n!=null){ c.name=n; buildTabs(); buildControls(); refresh(); }
     });
     if(state.tabs.length>1){
       const x=document.createElement("button"); x.className="x"; x.textContent="×"; x.title="Close tab";
-      x.addEventListener("click",ev=>{ev.stopPropagation(); state.tabs.splice(i,1); if(state.active>=state.tabs.length) state.active=state.tabs.length-1; buildTabs(); buildControls(); refresh();});
+      x.addEventListener("click",ev=>{ ev.stopPropagation(); state.tabs.splice(i,1); if(state.active>=state.tabs.length) state.active=state.tabs.length-1; buildTabs(); buildControls(); refresh(); });
       tab.appendChild(x);
     }
     bar.appendChild(tab);
@@ -508,14 +668,14 @@ function nextName(){
   return "Option "+(state.tabs.length+1);
 }
 
-/* ---------- refresh ---------- */
+/* ====================== refresh ====================== */
 function refresh(){
   const stats = render(state.tabs[state.active]);
   renderStats(stats);
   renderCompare();
 }
 
-/* ---------- serialization ---------- */
+/* ====================== serialization ====================== */
 function encodeCfg(cfg){
   const json=JSON.stringify(cfg);
   return btoa(unescape(encodeURIComponent(json))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
@@ -525,18 +685,43 @@ function decodeCfg(str){
   while(s.length%4) s+="=";
   return JSON.parse(decodeURIComponent(escape(atob(s))));
 }
-// Fill any fields missing from a loaded/decoded config with current defaults,
-// so older or partial share strings keep working as new parameters are added.
-function mergeDefaults(c){
-  if (!c || typeof c !== "object") c = {};
-  const merged = Object.assign(defaultConfig(c.name || "Option A"), c);
-  // coerce numeric fields, falling back to defaults for missing/invalid values
-  const def = defaultConfig();
-  for (const f of FIELDS){
-    if (f.t === "sel") continue;
-    const v = +merged[f.k];
-    merged[f.k] = Number.isFinite(v) ? v : def[f.k];
+function sanitizeCustom(list){
+  return list.filter(it=>it && (it.type==="section"||it.type==="aisle"))
+             .map(it=>({type:it.type, width:Math.max(0, numOr(it.width,0))}));
+}
+function normalizeSeating(seat, legacy, def){
+  const out={ mode:"equal", sections:def.sections, edgeAisle:def.edgeAisle, centerAisle:def.centerAisle, nonCenterAisle:def.nonCenterAisle, custom:null };
+  if (seat && typeof seat==="object"){
+    out.mode = seat.mode==="custom" ? "custom" : "equal";
+    out.sections = intOr(seat.sections, def.sections);
+    out.edgeAisle = numOr(seat.edgeAisle, def.edgeAisle);
+    out.centerAisle = numOr(seat.centerAisle, def.centerAisle);
+    out.nonCenterAisle = numOr(seat.nonCenterAisle, def.nonCenterAisle);
+    out.custom = Array.isArray(seat.custom) ? sanitizeCustom(seat.custom) : null;
+    if (out.mode==="custom" && !out.custom) out.custom=[];
+  } else { // legacy flat fields (older serialized configs) -> Equal mode
+    out.sections = intOr(legacy.sections, def.sections);
+    out.edgeAisle = numOr(legacy.edgeAisle, def.edgeAisle);
+    out.centerAisle = numOr(legacy.centerAisle, def.centerAisle);
+    out.nonCenterAisle = numOr(legacy.nonCenterAisle, def.nonCenterAisle);
   }
+  return out;
+}
+// Fill any missing fields with defaults so older/partial share strings keep working.
+function mergeDefaults(c){
+  if (!c || typeof c!=="object") c={};
+  const def=defaultConfig(typeof c.name==="string" && c.name ? c.name : "Option A");
+  const merged=Object.assign({}, def, c);
+  merged.name = (typeof c.name==="string" && c.name) ? c.name : def.name;
+  merged.transeptDir = ["forward","toward","angled"].includes(c.transeptDir) ? c.transeptDir : def.transeptDir;
+  merged.naveSeating = normalizeSeating(c.naveSeating,
+    {sections:c.naveSections, edgeAisle:c.edgeAisle, centerAisle:c.centerAisle, nonCenterAisle:c.nonCenterAisle}, def.naveSeating);
+  merged.transeptSeating = normalizeSeating(c.transeptSeating,
+    {sections:c.transeptSections, edgeAisle:c.edgeAisle, centerAisle:c.centerAisle, nonCenterAisle:c.nonCenterAisle}, def.transeptSeating);
+  // drop obsolete flat seating keys
+  delete merged.naveSections; delete merged.transeptSections;
+  delete merged.centerAisle; delete merged.nonCenterAisle; delete merged.edgeAisle;
+  for (const k of SIMPLE_NUM_KEYS) merged[k]=numOr(merged[k], def[k]);
   return merged;
 }
 
@@ -551,14 +736,11 @@ document.getElementById("exportBtn").addEventListener("click",()=>{
   });
 });
 document.getElementById("strBtn").addEventListener("click",async()=>{
-  const str=encodeCfg(state.tabs[state.active]);
-  await copy(str, "Config string copied — paste it via “Load from string”.");
+  await copy(encodeCfg(state.tabs[state.active]), "Config string copied — paste it via “Load from string”.");
 });
 document.getElementById("linkBtn").addEventListener("click",async()=>{
-  const str=encodeCfg(state.tabs[state.active]);
-  const base=location.href.replace(/[?#].*$/,"");  // works for file:// and http(s)
-  const url=base+"?c="+str;
-  await copy(url, "Share link copied — opening it auto-loads this layout.");
+  const base=location.href.replace(/[?#].*$/,"");
+  await copy(base+"?c="+encodeCfg(state.tabs[state.active]), "Share link copied — opening it auto-loads this layout.");
 });
 document.getElementById("loadBtn").addEventListener("click",()=>{
   const inp=prompt("Paste a config string or share link:");
@@ -583,12 +765,12 @@ function toast(msg){
   document.body.appendChild(t); setTimeout(()=>t.remove(),2200);
 }
 
-/* ---------- init ---------- */
+/* ====================== init ====================== */
 (function init(){
   const params=new URLSearchParams(location.search);
   const c=params.get("c");
   if(c){
-    try{ const cfg=mergeDefaults(decodeCfg(c)); state.tabs=[cfg]; }
+    try{ state.tabs=[mergeDefaults(decodeCfg(c))]; }
     catch(e){ state.tabs=[defaultConfig("Option A"), defaultConfig("Option B")]; }
   } else {
     state.tabs=[defaultConfig("Option A"), defaultConfig("Option B")];
