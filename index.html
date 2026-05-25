@@ -26,9 +26,12 @@
   .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.08)}
   .toolbar{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
-  main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:340px 1fr;grid-template-rows:minmax(0,1fr);gap:0}
+  main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:425px 1fr;grid-template-rows:minmax(0,1fr);gap:0}
   .controls{min-height:0;padding:14px 16px 28px;overflow:auto;border-right:1px solid var(--line);background:var(--panel)}
-  .stage{min-height:0;padding:14px 16px 28px;overflow:auto}
+  .stage{min-height:0;padding:0;overflow:hidden;display:flex;flex-direction:column}
+  .stage .row-actions{flex:0 0 auto;margin:0;padding:12px 16px 6px}
+  .stage .legend{flex:0 0 auto;margin:0;padding:0 16px 6px}
+  .canvas-wrap{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px 16px;overflow:hidden}
   fieldset{border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px}
   legend{font-weight:650;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px}
   .subhead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin:11px 0 5px;border-bottom:1px dotted var(--line);padding-bottom:3px}
@@ -59,8 +62,8 @@
   .cust-total .badge.over{background:#f6dcdc;color:#9b1c1c}
   .cust-total .badge.under{background:#fdeccb;color:#8a5a00}
   .cust-hint{font-size:11px;color:var(--muted);margin:3px 0 0;font-style:italic}
-  canvas{background:#fff;border:1px solid var(--line);border-radius:10px;max-width:100%;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-  .stats{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  canvas{background:#fff;border:1px solid var(--line);border-radius:10px;max-width:100%;max-height:100%;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  .stats{flex:0 0 auto;max-height:38%;overflow:auto;border-top:2px solid var(--line);background:var(--panel);padding:10px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
   .stat{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--panel)}
   .stat .v{font-size:21px;font-weight:700}
   .stat .k{font-size:12px;color:var(--muted)}
@@ -111,9 +114,10 @@
       <span><i class="sw" style="background:var(--tan);border-color:var(--tanstroke)"></i> Seat rows</span>
       <span><i class="sw" style="background:var(--accent);border-color:var(--accent)"></i> Altar</span>
     </div>
-    <canvas id="cv" width="900" height="680"></canvas>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="cv"></canvas>
+    </div>
     <div class="stats" id="stats"></div>
-    <p class="hint">Tip: each tab is an independent layout. Open the <b>▦ Summary</b> tab to see every layout together with the comparison table. Share a tab with “Copy share link”.</p>
   </section>
   <section class="summary" id="summaryView">
     <div class="summary-images" id="summaryImages"></div>
@@ -723,8 +727,17 @@ function nextName(){
 /* ====================== refresh ====================== */
 function refresh(){
   if (state.view === "summary"){ renderSummary(); return; }
-  const stats = render(state.tabs[state.active], CV);
+  const stats = renderEditCanvas();
   renderStats(stats);
+}
+// Size the editing canvas to fill its container, then draw the active tab.
+function renderEditCanvas(){
+  const wrap=document.getElementById("canvasWrap");
+  const cs=getComputedStyle(wrap);
+  const w=Math.max(220, Math.floor(wrap.clientWidth  - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)));
+  const h=Math.max(220, Math.floor(wrap.clientHeight - parseFloat(cs.paddingTop)  - parseFloat(cs.paddingBottom)));
+  setupCanvas(CV, w, h);
+  return render(state.tabs[state.active], CV);
 }
 
 function renderSummary(){
@@ -795,8 +808,10 @@ function mergeDefaults(c){
 
 document.getElementById("exportBtn").addEventListener("click",()=>{
   const cfg=state.tabs[state.active];
-  render(cfg);
-  CV.toBlob(b=>{
+  const off=document.createElement("canvas");      // off-screen, fixed high-res export
+  setupCanvas(off, 1400, 1050);
+  render(cfg, off);
+  off.toBlob(b=>{
     const a=document.createElement("a");
     a.href=URL.createObjectURL(b);
     a.download=(cfg.name||"church-layout").replace(/[^\w\-]+/g,"_")+".png";
@@ -833,7 +848,10 @@ function toast(msg){
   document.body.appendChild(t); setTimeout(()=>t.remove(),2200);
 }
 
-/* ====================== init ====================== */
+/* ====================== resize + init ====================== */
+let _resizeT=null;
+window.addEventListener("resize",()=>{ clearTimeout(_resizeT); _resizeT=setTimeout(refresh,120); });
+
 (function init(){
   const params=new URLSearchParams(location.search);
   const c=params.get("c");
