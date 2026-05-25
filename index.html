@@ -11,11 +11,11 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
-  body{font:14px/1.4 system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);}
-  header{padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  body{font:14px/1.4 system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);display:flex;flex-direction:column;overflow:hidden;}
+  header{flex:0 0 auto;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   header h1{font-size:16px;margin:0;font-weight:650}
   header .sub{color:var(--muted);font-size:12px}
-  .tabsbar{display:flex;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  .tabsbar{flex:0 0 auto;display:flex;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
   .tab{padding:6px 12px;border:1px solid var(--line);border-radius:7px 7px 0 0;background:#efeae0;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px}
   .tab.active{background:var(--panel);border-bottom-color:var(--panel);font-weight:650}
   .tab .x{color:var(--muted);font-weight:700;border:0;background:none;cursor:pointer;padding:0 2px;line-height:1}
@@ -26,9 +26,9 @@
   .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.08)}
   .toolbar{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
-  main{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100% - 0px)}
-  .controls{padding:14px 16px;overflow:auto;border-right:1px solid var(--line);background:var(--panel)}
-  .stage{padding:14px 16px;overflow:auto}
+  main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:340px 1fr;grid-template-rows:minmax(0,1fr);gap:0}
+  .controls{min-height:0;padding:14px 16px 28px;overflow:auto;border-right:1px solid var(--line);background:var(--panel)}
+  .stage{min-height:0;padding:14px 16px 28px;overflow:auto}
   fieldset{border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px}
   legend{font-weight:650;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px}
   .subhead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin:11px 0 5px;border-bottom:1px dotted var(--line);padding-bottom:3px}
