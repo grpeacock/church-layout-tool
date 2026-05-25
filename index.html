@@ -90,7 +90,7 @@ function defaultConfig(name){
   return {
     name: name || "Option A",
     naveLength: 80, naveWidth: 40, naveSections: 2,
-    transeptLength: 24, transeptWidth: 30, transeptSections: 1, transeptDir: "toward",
+    transeptLength: 24, transeptWidth: 30, transeptSections: 1, transeptDir: "toward", transeptFrontGap: 0,
     seatWidth: 1.6, seatDepth: 1.5, legSpace: 1.5,
     centerAisle: 6, nonCenterAisle: 4, edgeAisle: 2,
     altarDistance: 0, altarWidth: 9, altarDepth: 4, frontToAltar: 8,
@@ -107,6 +107,7 @@ const FIELDS = [
   {g:"Transept", k:"transeptSections", l:"Transept sections (per arm)", t:"num", min:1, step:1, int:true},
   {g:"Transept", k:"transeptDir", l:"Transept seat direction", t:"sel",
     opts:[["forward","Forward (face altar end)"],["toward","Toward crossing"],["angled","Angled at altar"]]},
+  {g:"Transept", k:"transeptFrontGap", l:"Transept front-row setback from E wall (Forward)", t:"num", min:0, step:0.5},
 
   {g:"Per-seat", k:"seatWidth", l:"Seat width", t:"num", min:0.1, step:0.1},
   {g:"Per-seat", k:"seatDepth", l:"Seat depth", t:"num", min:0.1, step:0.1},
@@ -129,17 +130,18 @@ const state = { tabs: [], active: 0 };
 /* ---------- geometry helpers ---------- */
 // Divide a span of total length L into n equal seat-sections separated by aisles.
 // Returns {segs:[{start,size}], size, aisleSum}. Center aisle only used when n is even.
-function layoutSections(L, n, centerA, nonCenterA, edgeA){
+function layoutSections(L, n, centerA, nonCenterA, edgeStart, edgeEnd){
   n = Math.max(1, Math.round(n));
+  if (edgeEnd == null) edgeEnd = edgeStart;   // symmetric edge aisles by default
   let inter = 0;
   if (n > 1){
     if (n % 2 === 0) inter = centerA + nonCenterA * (n - 2);
     else inter = nonCenterA * (n - 1);
   }
-  const usable = L - 2*edgeA - inter;
+  const usable = L - edgeStart - edgeEnd - inter;
   const size = usable > 0 ? usable / n : 0;
   const segs = [];
-  let pos = edgeA;
+  let pos = edgeStart;
   for (let i=0;i<n;i++){
     segs.push({start:pos, size:size});
     pos += size;
@@ -209,7 +211,9 @@ function buildModel(cfg){
 
   /* ----- NAVE (faces up toward altar): seat-axis +x, depth +y ----- */
   const naveLeft = cx - halfNW;
-  const frontRowTopY = Math.max(cy + halfTW, altarFrontY + (+cfg.frontToAltar));
+  // front row is placed purely by its distance from the altar; this may place
+  // front rows inside the crossing (no clamp to the crossing edge).
+  const frontRowTopY = altarFrontY + (+cfg.frontToAltar || 0);
   const naveRows = Math.max(0, Math.floor((naveBottom - frontRowTopY) / pitch + 1e-9));
   const naveLay = layoutSections(nw, nSec, cA, ncA, eA);
   const naveSeatsPerSec = Math.floor(naveLay.size / sW + 1e-9);
@@ -226,16 +230,21 @@ function buildModel(cfg){
   let tRows=0, tSeatsPerSec=0, tSeatsPerRow=0;
   const armBars=[];
   if (dir === "forward"){
-    // faces up: seat-axis +x along arm length, depth +y across transept width
-    tRows = Math.max(0, Math.floor(tw / pitch + 1e-9));
-    const lay = layoutSections(tl, tSec, cA, ncA, eA);
-    tSeatsPerSec = Math.floor(lay.size / sW + 1e-9);
+    // faces up: seat-axis +x along arm length, depth +y across transept width.
+    // gap pulls the front row back from the liturgical-east (altar-side, top) wall.
+    const gap = Math.max(0, +cfg.transeptFrontGap || 0);
+    tRows = Math.max(0, Math.floor((tw - gap) / pitch + 1e-9));
+    // No edge aisle on the crossing side (the nave already provides that clearance).
+    // The left arm's crossing side is its high-x end; the right arm's is its low-x end.
+    const leftLay  = layoutSections(tl, tSec, cA, ncA, eA, 0);
+    const rightLay = layoutSections(tl, tSec, cA, ncA, 0, eA);
+    tSeatsPerSec = Math.floor(leftLay.size / sW + 1e-9);
     tSeatsPerRow = tSeatsPerSec * tSec;
-    const arms=[{base:xL}, {base:cx+halfNW}]; // left arm starts at xL, right arm at inner edge
+    const arms=[{base:xL, lay:leftLay}, {base:cx+halfNW, lay:rightLay}];
     for (const arm of arms){
       for (let r=0;r<tRows;r++){
-        const y0 = (cy-halfTW) + r*pitch;
-        for (const seg of lay.segs){
+        const y0 = (cy-halfTW) + gap + r*pitch;
+        for (const seg of arm.lay.segs){
           if (tSeatsPerSec<=0) continue;
           armBars.push(makeBar(arm.base+seg.start, y0, seg.size,0, 0,sD, tSeatsPerSec));
         }
@@ -516,7 +525,20 @@ function decodeCfg(str){
   while(s.length%4) s+="=";
   return JSON.parse(decodeURIComponent(escape(atob(s))));
 }
-function mergeDefaults(c){ return Object.assign(defaultConfig(c.name||"Option A"), c); }
+// Fill any fields missing from a loaded/decoded config with current defaults,
+// so older or partial share strings keep working as new parameters are added.
+function mergeDefaults(c){
+  if (!c || typeof c !== "object") c = {};
+  const merged = Object.assign(defaultConfig(c.name || "Option A"), c);
+  // coerce numeric fields, falling back to defaults for missing/invalid values
+  const def = defaultConfig();
+  for (const f of FIELDS){
+    if (f.t === "sel") continue;
+    const v = +merged[f.k];
+    merged[f.k] = Number.isFinite(v) ? v : def[f.k];
+  }
+  return merged;
+}
 
 document.getElementById("exportBtn").addEventListener("click",()=>{
   const cfg=state.tabs[state.active];
