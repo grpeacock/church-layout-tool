@@ -28,10 +28,12 @@
   .toolbar{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
   main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:425px 1fr;grid-template-rows:minmax(0,1fr);gap:0}
   .controls{min-height:0;padding:14px 16px 28px;overflow:auto;border-right:1px solid var(--line);background:var(--panel)}
-  .stage{min-height:0;padding:0;overflow:hidden;display:flex;flex-direction:column}
+  .stage{min-height:0;padding:0;overflow:hidden;display:flex;flex-direction:column;position:relative}
   .stage .row-actions{flex:0 0 auto;margin:0;padding:12px 16px 6px}
   .stage .legend{flex:0 0 auto;margin:0;padding:0 16px 6px}
-  .canvas-wrap{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px 16px;overflow:hidden}
+  .canvas-wrap{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px 16px;overflow:hidden;cursor:grab;touch-action:none;user-select:none;position:relative}
+  .canvas-wrap.dragging{cursor:grabbing}
+  .canvas-wrap canvas{touch-action:none}
   fieldset{border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px}
   legend{font-weight:650;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px}
   .subhead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin:11px 0 5px;border-bottom:1px dotted var(--line);padding-bottom:3px}
@@ -90,6 +92,92 @@
   .sumcap{font-size:12px;color:var(--accent);font-weight:600;text-align:center;margin-top:6px}
   .summary-table{flex:0 0 auto;max-height:42%;overflow:auto;border-top:2px solid var(--line);background:var(--panel);padding:8px 16px 14px}
   .summary-table table.cmp{margin-top:0}
+
+  /* sidebar collapse */
+  main.collapsed{grid-template-columns:1fr}
+  main.collapsed #controls{display:none}
+
+  /* floating sidebar toggle button on the stage */
+  .sidebar-toggle{
+    position:absolute; top:8px; left:8px; z-index:5;
+    width:34px; height:34px; padding:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; line-height:1; background:var(--panel);
+    border:1px solid var(--line); border-radius:7px; cursor:pointer;
+    box-shadow:0 1px 4px rgba(0,0,0,.08);
+  }
+  .sidebar-toggle:hover{background:#f0ece3}
+  /* leave room for the toggle button at left of the action row */
+  .stage .row-actions{padding-left:52px}
+
+  /* floating zoom controls in the stage */
+  .canvas-controls{
+    position:absolute; right:18px; bottom:14px; z-index:5;
+    display:flex; flex-direction:column;
+    background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:8px;
+    box-shadow:0 1px 4px rgba(0,0,0,.10); overflow:hidden;
+  }
+  .canvas-controls button{
+    width:34px; height:34px; padding:0; font-size:16px; line-height:1;
+    background:transparent; border:0; cursor:pointer;
+  }
+  .canvas-controls button:hover{background:#f0ece3}
+  .canvas-controls button + button{border-top:1px solid var(--line)}
+
+  /* drawer backdrop (mobile only) */
+  .backdrop{display:none}
+
+  /* ===== mobile-friendly tweaks ===== */
+  @media (max-width: 800px) {
+    header{padding:8px 12px;gap:8px}
+    header h1{font-size:14px}
+    header .sub{display:none}
+    .tabsbar{padding:6px 8px;gap:4px;flex-wrap:nowrap;overflow-x:auto}
+    .tab{flex:0 0 auto;font-size:12px;padding:5px 9px}
+    .toolbar{margin-left:auto;flex-wrap:nowrap}
+    .toolbar .btn{padding:4px 8px;font-size:12px}
+
+    /* sidebar becomes an overlay drawer */
+    main{grid-template-columns:1fr}
+    main.collapsed{grid-template-columns:1fr}
+    #controls{
+      position:fixed; top:0; left:0; bottom:0;
+      width:min(85vw, 360px);
+      z-index:30; transform:translateX(-100%);
+      transition:transform .22s ease;
+      border-right:1px solid var(--line);
+      box-shadow:2px 0 14px rgba(0,0,0,.25);
+    }
+    main:not(.collapsed) #controls{display:block;transform:translateX(0)}
+    main.collapsed #controls{display:block;transform:translateX(-100%)}
+
+    .backdrop{
+      display:block; position:fixed; inset:0; background:rgba(0,0,0,.38);
+      z-index:25; opacity:0; pointer-events:none; transition:opacity .18s;
+    }
+    main:not(.collapsed) .backdrop{opacity:1; pointer-events:auto}
+
+    /* stage layout: stack action row, fix legend wrap */
+    .stage .row-actions{padding:8px 12px 4px 52px; gap:4px}
+    .stage .row-actions .btn{padding:5px 9px; font-size:12px}
+    .stage .legend{padding:0 12px 4px; font-size:11px; gap:10px}
+    .canvas-wrap{padding:4px 8px}
+    .stats{padding:8px 12px;max-height:36vh;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
+    .stat{padding:7px 9px}
+    .stat .v{font-size:18px}
+    .stat .k{font-size:11px}
+
+    /* summary: each region scrolls on its own; thumbnails shrink */
+    .summary-images{padding:10px;gap:10px}
+    .sumcard canvas{max-width:calc(100vw - 44px); height:auto}
+    .summary-table{max-height:50vh;padding:6px 12px 10px}
+    table.cmp th,table.cmp td{padding:4px 6px;font-size:12px}
+
+    /* zoom controls smaller on mobile */
+    .canvas-controls{right:10px; bottom:10px}
+    .canvas-controls button{width:38px; height:38px} /* easier touch targets */
+    .sidebar-toggle{width:40px; height:40px; font-size:20px} /* easier touch */
+  }
 </style>
 </head>
 <body>
@@ -102,7 +190,9 @@
 
 <main id="main">
   <section class="controls" id="controls"></section>
+  <div class="backdrop" id="backdrop"></div>
   <section class="stage" id="stage">
+    <button class="sidebar-toggle" id="sidebarToggle" title="Toggle settings panel" aria-label="Toggle settings panel">☰</button>
     <div class="row-actions">
       <button class="btn primary" id="exportBtn">⬇ Export PNG</button>
       <button class="btn" id="linkBtn">🔗 Copy share link</button>
@@ -116,6 +206,11 @@
     </div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv"></canvas>
+      <div class="canvas-controls" id="canvasControls">
+        <button id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+        <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+        <button id="zoomReset" title="Reset view" aria-label="Reset view">↺</button>
+      </div>
     </div>
     <div class="stats" id="stats"></div>
   </section>
@@ -168,7 +263,9 @@ const NUM = {
 const SIMPLE_NUM_KEYS = Object.keys(NUM);
 
 /* ====================== state ====================== */
-const state = { tabs: [], active: 0, view: "edit" };  // view: "edit" | "summary"
+const state = { tabs: [], viewports: [], active: 0, view: "edit", sidebar: "open" };  // view: "edit" | "summary"; sidebar: "open" | "collapsed"
+function defaultViewport(){ return { zoom:1, panX:0, panY:0 }; }
+function activeVP(){ return state.viewports[state.active] || (state.viewports[state.active] = defaultViewport()); }
 let dragState = null;  // { key, from } during a drag-reorder
 
 /* ====================== geometry helpers ====================== */
@@ -368,8 +465,11 @@ function render(cfg, canvas, opts){
 
   const fw = Math.max(1, m.bounds.maxX-m.bounds.minX);
   const fh = Math.max(1, m.bounds.maxY-m.bounds.minY);
-  const s = opts.scale || Math.min((W-2*PAD)/fw, (H-2*PAD)/fh);  // opts.scale = shared (summary)
-  const ox = (W - fw*s)/2, oy = (H - fh*s)/2;
+  const fitScale = opts.scale != null ? opts.scale : Math.min((W-2*PAD)/fw, (H-2*PAD)/fh);  // opts.scale = shared (summary)
+  const zoom = opts.zoom || 1;
+  const s = fitScale * zoom;
+  const ox = (W - fw*s)/2 + (opts.panX || 0);
+  const oy = (H - fh*s)/2 + (opts.panY || 0);
   const X = x => ox + (x-m.bounds.minX)*s;
   const Y = y => oy + (y-m.bounds.minY)*s;
   const poly = (pts) => { ctx.beginPath(); pts.forEach((p,i)=> i? ctx.lineTo(X(p.x),Y(p.y)) : ctx.moveTo(X(p.x),Y(p.y))); ctx.closePath(); };
@@ -694,9 +794,9 @@ function buildTabs(){
   });
 
   const add=document.createElement("button"); add.className="btn"; add.textContent="+ Add";
-  add.addEventListener("click",()=>{ state.tabs.push(defaultConfig(nextName())); showEdit(state.tabs.length-1); });
+  add.addEventListener("click",()=>{ state.tabs.push(defaultConfig(nextName())); state.viewports.push(defaultViewport()); showEdit(state.tabs.length-1); });
   const dup=document.createElement("button"); dup.className="btn"; dup.textContent="⧉ Duplicate";
-  dup.addEventListener("click",()=>{ const base=Math.max(0,Math.min(state.active,state.tabs.length-1)); const c=JSON.parse(JSON.stringify(state.tabs[base])); c.name=nextName(); state.tabs.push(c); showEdit(state.tabs.length-1); });
+  dup.addEventListener("click",()=>{ const base=Math.max(0,Math.min(state.active,state.tabs.length-1)); const c=JSON.parse(JSON.stringify(state.tabs[base])); c.name=nextName(); state.tabs.push(c); state.viewports.push(defaultViewport()); showEdit(state.tabs.length-1); });
   const tools=document.createElement("div"); tools.className="toolbar"; tools.appendChild(add); tools.appendChild(dup);
   bar.appendChild(tools);
 }
@@ -713,6 +813,7 @@ function showSummary(){
 }
 function closeTab(i){
   state.tabs.splice(i,1);
+  state.viewports.splice(i,1);
   if(state.active>=state.tabs.length) state.active=state.tabs.length-1;
   if(state.active<0) state.active=0;
   if(state.view==="edit") showEdit(state.active);
@@ -737,7 +838,8 @@ function renderEditCanvas(){
   const w=Math.max(220, Math.floor(wrap.clientWidth  - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)));
   const h=Math.max(220, Math.floor(wrap.clientHeight - parseFloat(cs.paddingTop)  - parseFloat(cs.paddingBottom)));
   setupCanvas(CV, w, h);
-  return render(state.tabs[state.active], CV);
+  const vp=activeVP();
+  return render(state.tabs[state.active], CV, {zoom:vp.zoom, panX:vp.panX, panY:vp.panY});
 }
 
 function renderSummary(){
@@ -839,7 +941,7 @@ document.getElementById("loadBtn").addEventListener("click",()=>{
     const m=s.match(/[?&]c=([^&]+)/); if(m) s=m[1];
     const cfg=mergeDefaults(decodeCfg(s));
     if(!cfg.name || state.tabs.some(t=>t.name===cfg.name)) cfg.name=nextName();
-    state.tabs.push(cfg); state.active=state.tabs.length-1;
+    state.tabs.push(cfg); state.viewports.push(defaultViewport()); state.active=state.tabs.length-1;
     buildTabs(); buildControls(); refresh();
   }catch(e){ alert("Could not read that config string.\n"+e.message); }
 });
@@ -852,6 +954,122 @@ function toast(msg){
   t.textContent=msg;
   t.style.cssText="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:9px 14px;border-radius:8px;font-size:13px;z-index:99;box-shadow:0 2px 10px rgba(0,0,0,.3)";
   document.body.appendChild(t); setTimeout(()=>t.remove(),2200);
+}
+
+/* ====================== zoom / pan + sidebar controls ====================== */
+const ZOOM_MIN = 1, ZOOM_MAX = 8;
+function zoomAtCursor(cssX, cssY, factor, vp){
+  const W = CV._w, H = CV._h;
+  const PAD = Math.max(8, Math.round(Math.min(W,H)*0.04));
+  const cfg = state.tabs[state.active]; if (!cfg) return;
+  const m = buildModel(cfg);
+  const fw = Math.max(1, m.bounds.maxX-m.bounds.minX);
+  const fh = Math.max(1, m.bounds.maxY-m.bounds.minY);
+  const baseScale = Math.min((W-2*PAD)/fw, (H-2*PAD)/fh);
+  const s0 = baseScale * vp.zoom;
+  const ox0 = (W - fw*s0)/2 + vp.panX, oy0 = (H - fh*s0)/2 + vp.panY;
+  // world point (in feet from minX,minY) under the cursor
+  const wx = (cssX - ox0) / s0, wy = (cssY - oy0) / s0;
+  const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vp.zoom * factor));
+  const s1 = baseScale * newZoom;
+  vp.zoom = newZoom;
+  vp.panX = cssX - (W - fw*s1)/2 - wx*s1;
+  vp.panY = cssY - (H - fh*s1)/2 - wy*s1;
+  // when fully zoomed out, recenter so we don't leave an off-center fit-view
+  if (newZoom === 1){ vp.panX = 0; vp.panY = 0; }
+}
+
+function resetView(){
+  const vp = activeVP(); vp.zoom = 1; vp.panX = 0; vp.panY = 0;
+  refresh();
+}
+
+function attachViewportControls(){
+  const wrap = document.getElementById("canvasWrap");
+  const pointers = new Map();  // pointerId -> {x,y}
+  let pinch = null;            // {startD, midX, midY, startVP}
+
+  wrap.addEventListener("wheel", e=>{
+    if (state.view !== "edit") return;
+    e.preventDefault();
+    const rect = CV.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    zoomAtCursor(cx, cy, factor, activeVP());
+    refresh();
+  }, {passive:false});
+
+  wrap.addEventListener("pointerdown", e=>{
+    if (state.view !== "edit") return;
+    if (e.target.closest && e.target.closest(".canvas-controls")) return;  // let zoom buttons handle their own clicks
+    try { wrap.setPointerCapture(e.pointerId); } catch(_) {}
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    wrap.classList.add("dragging");
+    if (pointers.size === 2){
+      const pts = Array.from(pointers.values());
+      pinch = {
+        startD: Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y),
+        midX: (pts[0].x+pts[1].x)/2, midY: (pts[0].y+pts[1].y)/2,
+        startVP: { ...activeVP() },
+      };
+    }
+  });
+
+  wrap.addEventListener("pointermove", e=>{
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (pointers.size >= 2 && pinch){
+      const pts = Array.from(pointers.values());
+      const d = Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y);
+      const vp = activeVP();
+      vp.zoom = pinch.startVP.zoom; vp.panX = pinch.startVP.panX; vp.panY = pinch.startVP.panY;
+      const rect = CV.getBoundingClientRect();
+      const cx = pinch.midX - rect.left, cy = pinch.midY - rect.top;
+      zoomAtCursor(cx, cy, d / pinch.startD, vp);
+      refresh();
+    } else if (pointers.size === 1){
+      const vp = activeVP();
+      vp.panX += e.clientX - prev.x;
+      vp.panY += e.clientY - prev.y;
+      refresh();
+    }
+  });
+
+  const endPointer = e=>{
+    if (pointers.has(e.pointerId)) pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 0) wrap.classList.remove("dragging");
+  };
+  wrap.addEventListener("pointerup", endPointer);
+  wrap.addEventListener("pointercancel", endPointer);
+  wrap.addEventListener("pointerleave", endPointer);
+
+  document.getElementById("zoomIn").addEventListener("click",()=>{
+    const r = CV.getBoundingClientRect();
+    zoomAtCursor(r.width/2, r.height/2, 1.25, activeVP()); refresh();
+  });
+  document.getElementById("zoomOut").addEventListener("click",()=>{
+    const r = CV.getBoundingClientRect();
+    zoomAtCursor(r.width/2, r.height/2, 0.8, activeVP()); refresh();
+  });
+  document.getElementById("zoomReset").addEventListener("click", resetView);
+}
+
+function setSidebar(state_){
+  state.sidebar = state_;
+  const main = document.getElementById("main");
+  main.classList.toggle("collapsed", state.sidebar === "collapsed");
+  // grid columns changed → editing canvas needs to refit
+  if (state.view === "edit") refresh();
+}
+function attachSidebarControls(){
+  document.getElementById("sidebarToggle").addEventListener("click",()=>{
+    setSidebar(state.sidebar === "open" ? "collapsed" : "open");
+  });
+  document.getElementById("backdrop").addEventListener("click",()=>{
+    setSidebar("collapsed");
+  });
 }
 
 /* ====================== resize + init ====================== */
@@ -867,9 +1085,16 @@ window.addEventListener("resize",()=>{ clearTimeout(_resizeT); _resizeT=setTimeo
   } else {
     state.tabs=[defaultConfig("Option A"), defaultConfig("Option B")];
   }
+  state.viewports = state.tabs.map(defaultViewport);
   state.view="edit"; state.active=0;
-  document.getElementById("main").classList.remove("summary");
+  // default sidebar: collapsed on narrow screens (mobile drawer), open on desktop
+  state.sidebar = (window.matchMedia && window.matchMedia("(max-width: 800px)").matches) ? "collapsed" : "open";
+  const main=document.getElementById("main");
+  main.classList.remove("summary");
+  main.classList.toggle("collapsed", state.sidebar==="collapsed");
   buildTabs(); buildControls(); refresh();
+  attachViewportControls();
+  attachSidebarControls();
 })();
 </script>
 </body>
