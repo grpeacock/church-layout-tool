@@ -319,6 +319,97 @@ function makeBar(ax0, ay0, axx, axy, dxx, dxy, seats){
     c:{x:ax0+axx+dxx, y:ay0+axy+dxy}, d:{x:ax0+dxx, y:ay0+dxy}, seats
   };
 }
+// Clip a parametric line P(t)=(cx+t*ux, cy+t*uy) to an axis-aligned rectangle.
+// Returns {t0,t1} or null if no intersection.
+function clipLineToRect(cx, cy, ux, uy, rect){
+  let tMin = -Infinity, tMax = Infinity;
+  if (Math.abs(ux) > 1e-9){
+    const t1 = (rect.xMin - cx) / ux, t2 = (rect.xMax - cx) / ux;
+    tMin = Math.max(tMin, Math.min(t1, t2));
+    tMax = Math.min(tMax, Math.max(t1, t2));
+  } else if (cx < rect.xMin - 1e-9 || cx > rect.xMax + 1e-9){
+    return null;
+  }
+  if (Math.abs(uy) > 1e-9){
+    const t1 = (rect.yMin - cy) / uy, t2 = (rect.yMax - cy) / uy;
+    tMin = Math.max(tMin, Math.min(t1, t2));
+    tMax = Math.min(tMax, Math.max(t1, t2));
+  } else if (cy < rect.yMin - 1e-9 || cy > rect.yMax + 1e-9){
+    return null;
+  }
+  if (tMax <= tMin + 1e-9) return null;
+  return {t0: tMin, t1: tMax};
+}
+// Build a single angled transept arm: rows oriented at `angle`, each row clipped
+// to the arm rectangle so seats never overlap walls. armDirSign: -1 for left arm
+// (rows extend in -x from pivot pre-rotation), +1 for right.
+function buildAngledArm(pivot, angle, armDirSign, armRect, segs, halfTW, sW, sD, pitch){
+  const cosA = Math.cos(angle), sinA = Math.sin(angle);
+  const cy = pivot.y;
+  const bars = [];
+  let totalSeats = 0, rows = 0, maxSeatsPerRow = 0;
+  const worldPre = (px, py) => {
+    const dx = px - pivot.x, dy = py - pivot.y;
+    return { x: pivot.x + dx*cosA - dy*sinA, y: pivot.y + dx*sinA + dy*cosA };
+  };
+  const inside = p =>
+    p.x >= armRect.xMin - 1e-6 && p.x <= armRect.xMax + 1e-6 &&
+    p.y >= armRect.yMin - 1e-6 && p.y <= armRect.yMax + 1e-6;
+
+  for (let r = 0; r < 300; r++){
+    // The row's centerline (a line in world coords). If it doesn't touch the arm rect,
+    // we've swept past the rectangle and can stop.
+    const depthSigned = armDirSign * (r*pitch + sD/2);
+    const cw_x = pivot.x + depthSigned*cosA;
+    const cw_y = pivot.y + depthSigned*sinA;
+    const ux_w = -sinA, uy_w = cosA;
+    if (!clipLineToRect(cw_x, cw_y, ux_w, uy_w, armRect)) break;
+
+    const x_near = pivot.x + armDirSign * r*pitch;
+    const x_far  = pivot.x + armDirSign * (r*pitch + sD);
+    const xa = Math.min(x_near, x_far), xb = Math.max(x_near, x_far);
+
+    let rowSeats = 0;
+    for (const seg of segs){
+      const segSeatCount = Math.floor(seg.size / sW + 1e-9);
+      if (segSeatCount <= 0) continue;
+      // contiguous run of seats whose 4 rotated corners all sit inside the arm rect
+      let firstS = -1, lastS = -1;
+      for (let s = 0; s < segSeatCount; s++){
+        const t_start = -halfTW + seg.start + s*sW;
+        const t_end   = t_start + sW;
+        const c1 = worldPre(xa, cy + t_start);
+        const c2 = worldPre(xa, cy + t_end);
+        const c3 = worldPre(xb, cy + t_end);
+        const c4 = worldPre(xb, cy + t_start);
+        if (inside(c1) && inside(c2) && inside(c3) && inside(c4)){
+          if (firstS < 0) firstS = s;
+          lastS = s;
+        } else if (firstS >= 0){
+          break;  // seats outside the rect are contiguous past the end of the run
+        }
+      }
+      if (firstS < 0) continue;
+      const fitCount = lastS - firstS + 1;
+      const t0 = -halfTW + seg.start + firstS*sW;
+      const t1 = t0 + fitCount*sW;
+      bars.push({
+        a: worldPre(xa, cy + t0),
+        b: worldPre(xa, cy + t1),
+        c: worldPre(xb, cy + t1),
+        d: worldPre(xb, cy + t0),
+        seats: fitCount,
+      });
+      rowSeats += fitCount;
+    }
+    if (rowSeats > 0){
+      rows++;
+      totalSeats += rowSeats;
+      if (rowSeats > maxSeatsPerRow) maxSeatsPerRow = rowSeats;
+    }
+  }
+  return { bars, totalSeats, rows, maxSeatsPerRow };
+}
 
 /* ====================== core model ====================== */
 function buildModel(cfg){
@@ -377,6 +468,7 @@ function buildModel(cfg){
 
   /* ----- TRANSEPTS ----- */
   let tRows=0, tSeatsPerRow=0, tSecCount=0;
+  let armTotalL=0, armTotalR=0;
   if (dir === "forward"){
     // faces altar end; gap pulls front row off the liturgical-east (top) wall.
     const gap = Math.max(0, +cfg.transeptFrontGap || 0);
@@ -402,35 +494,48 @@ function buildModel(cfg){
     }
     tSeatsPerRow = sumSeats(leftSegs);
     tSecCount = leftSegs.length;
-  } else {
-    // toward crossing (and angled = toward + rotation): depth along arm length, seat-axis +y
+    armTotalL = armTotalR = tSeatsPerRow * tRows;
+  } else if (dir === "toward"){
+    // toward crossing: depth along arm length, seat-axis +y
     tRows = Math.max(0, Math.floor(tl / pitch + 1e-9));
     const segs = (TS.mode==="custom" && Array.isArray(TS.custom))
       ? sectionsCustom(TS.custom).segs
       : sectionsEqual(TS, tw, TS.edgeAisle, TS.edgeAisle);
-    const leftBars=[], rightBars=[];
     for (let r=0;r<tRows;r++){
       const xRightL = (cx-halfNW) - r*pitch, xLeftL = xRightL - sD;
       const xLeftR  = (cx+halfNW) + r*pitch;
       for (const seg of segs){
         const seats = segSeats(seg.size); if (seats<=0) continue;
-        leftBars.push (makeBar(xLeftL, (cy-halfTW)+seg.start, 0,seg.size, sD,0, seats));
-        rightBars.push(makeBar(xLeftR, (cy-halfTW)+seg.start, 0,seg.size, sD,0, seats));
+        bars.push(makeBar(xLeftL, (cy-halfTW)+seg.start, 0,seg.size, sD,0, seats));
+        bars.push(makeBar(xLeftR, (cy-halfTW)+seg.start, 0,seg.size, sD,0, seats));
       }
     }
-    if (dir === "angled"){
-      const pivL={x:cx-halfNW, y:cy}, angL=Math.atan2(altar.cy-pivL.y, altar.cx-pivL.x);
-      const pivR={x:cx+halfNW, y:cy}, angR=Math.atan2(altar.cy-pivR.y, altar.cx-pivR.x) - Math.PI;
-      for (const b of leftBars){  b.a=rot(b.a,pivL,angL); b.b=rot(b.b,pivL,angL); b.c=rot(b.c,pivL,angL); b.d=rot(b.d,pivL,angL); }
-      for (const b of rightBars){ b.a=rot(b.a,pivR,angR); b.b=rot(b.b,pivR,angR); b.c=rot(b.c,pivR,angR); b.d=rot(b.d,pivR,angR); }
-    }
-    bars.push(...leftBars, ...rightBars);
     tSeatsPerRow = sumSeats(segs);
     tSecCount = segs.length;
+    armTotalL = armTotalR = tSeatsPerRow * tRows;
+  } else { // angled at altar: partial rows at the target angle, clipped to each arm rectangle
+    const segs = (TS.mode==="custom" && Array.isArray(TS.custom))
+      ? sectionsCustom(TS.custom).segs
+      : sectionsEqual(TS, tw, TS.edgeAisle, TS.edgeAisle);
+    tSecCount = segs.length;
+    // Compute the LEFT arm directly, then mirror across x=cx to get the RIGHT
+    // arm — guarantees mirror symmetry no matter what the rotation math does.
+    const pivL = {x:cx-halfNW, y:cy};
+    const angL = Math.atan2(altar.cy-pivL.y, altar.cx-pivL.x);
+    const armRectL = {xMin: xL, xMax: cx-halfNW, yMin: cy-halfTW, yMax: cy+halfTW};
+    const resL = buildAngledArm(pivL, angL, -1, armRectL, segs, halfTW, sW, sD, pitch);
+    const mirrorX = p => ({x: 2*cx - p.x, y: p.y});
+    const mirrorBars = resL.bars.map(b => ({
+      a: mirrorX(b.a), b: mirrorX(b.b), c: mirrorX(b.c), d: mirrorX(b.d), seats: b.seats,
+    }));
+    bars.push(...resL.bars, ...mirrorBars);
+    tRows = resL.rows;
+    tSeatsPerRow = resL.maxSeatsPerRow;
+    armTotalL = armTotalR = resL.totalSeats;
   }
 
-  const armTotal = tSeatsPerRow * tRows;
-  const transeptTotal = armTotal * 2;
+  const armTotal = Math.round((armTotalL + armTotalR) / 2);
+  const transeptTotal = armTotalL + armTotalR;
   const total = naveTotal + transeptTotal;
 
   const stats = {
