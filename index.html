@@ -239,6 +239,10 @@ function defaultConfig(name){
     transeptLength: 24, transeptWidth: 30, transeptDir: "toward", transeptFrontGap: 0,
     // seats-first row counts (used when inputMode === "seats")
     naveRows: 28, transeptRows: 8,
+    // extra gaps (cross-aisles) inserted between nave rows. Each gap carries a
+    // size (ft) plus a position expressed both ways; the active input mode picks
+    // which one is edited: atFeet (dimensions) or afterRows (seats).
+    naveRowGaps: [],
     // per-seat
     seatWidth: 1.6, seatDepth: 1.5, legSpace: 1.5,
     // altar
@@ -449,14 +453,37 @@ function resolveSeatingToFeet(seat, sW){
   }
   return seat;
 }
-// Return a plain dimensions-mode config. Pass-through when already in
-// dimensions mode; otherwise derive every feet dimension from seat counts.
+// Normalize the nave row-gap list to model form: {after:<row index>, size:<ft>}.
+// "after" = how many rows sit ahead of the gap; a gap affects every row r with
+// after <= r. Positions come from feet (dimensions) or row counts (seats).
+function normalizeNaveGaps(cfg, pitch){
+  const seats = cfg.inputMode === "seats";
+  const list = Array.isArray(cfg.naveRowGaps) ? cfg.naveRowGaps : [];
+  return list.map(g=>{
+    const size = Math.max(0, +g.size || 0);
+    const after = seats ? Math.max(0, Math.round(+g.afterRows || 0))
+                        : Math.max(0, Math.floor(Math.max(0, +g.atFeet || 0)/pitch + 1e-9));
+    return { after, size };
+  }).filter(g=>g.size > 0).sort((a,b)=>a.after - b.after);
+}
+// Total gap feet applied within the first `rows` nave rows (gaps ahead of the
+// last placed row). Used to grow the computed nave length in seats mode.
+function naveGapTotal(gaps, rows){
+  let g=0; for (const gp of gaps){ if (gp.after <= rows-1) g+=gp.size; } return g;
+}
+// Return a plain dimensions-mode config whose gaps are normalized to {after,size}.
+// Pass-through shape when already in dimensions mode; otherwise derive every feet
+// dimension from seat counts.
 function resolveConfig(cfg){
-  if (cfg.inputMode !== "seats") return cfg;
   const sW=+cfg.seatWidth, sD=+cfg.seatDepth, leg=+cfg.legSpace, pitch=sD+leg;
+  const gaps = normalizeNaveGaps(cfg, pitch);
+  if (cfg.inputMode !== "seats"){
+    return Object.assign({}, cfg, { naveRowGaps: gaps });
+  }
   const NS=cfg.naveSeating, TS=cfg.transeptSeating, dir=cfg.transeptDir;
   const r = Object.assign({}, cfg);
   r.inputMode = "dimensions";
+  r.naveRowGaps = gaps;
   r.naveSeating = resolveSeatingToFeet(NS, sW);
   r.transeptSeating = resolveSeatingToFeet(TS, sW);
 
@@ -472,11 +499,12 @@ function resolveConfig(cfg){
     r.transeptWidth  = computeAlongRowFeet(TS, sW, +TS.edgeAisle, +TS.edgeAisle);
   }
 
-  // nave: seats run across the width, rows stack down the length
+  // nave: seats run across the width, rows stack down the length (+ row gaps)
   r.naveWidth = computeAlongRowFeet(NS, sW, +NS.edgeAisle, +NS.edgeAisle);
   const halfTW = r.transeptWidth/2;
+  const naveRows = Math.max(0, Math.round(+cfg.naveRows));
   const frontRowTopY = (-(+cfg.altarDistance)) + (+cfg.altarDepth)/2 + (+cfg.frontToAltar || 0);
-  r.naveLength = Math.max(0, Math.max(0, Math.round(+cfg.naveRows))*pitch + frontRowTopY - halfTW);
+  r.naveLength = Math.max(0, naveRows*pitch + naveGapTotal(gaps, naveRows) + frontRowTopY - halfTW);
   return r;
 }
 
@@ -521,16 +549,22 @@ function buildModel(cfg){
   const naveLeft = cx - halfNW;
   // front row placed purely by distance from altar (may sit inside the crossing).
   const frontRowTopY = altarFrontY + (+cfg.frontToAltar || 0);
-  const naveRows = Math.max(0, Math.floor((naveBottom - frontRowTopY) / pitch + 1e-9));
+  // extra cross-aisle gaps: a gap "after k rows" shifts every row r >= k back.
+  const naveGaps = Array.isArray(cfg.naveRowGaps) ? cfg.naveRowGaps : [];
+  const gapOffset = (r)=>{ let g=0; for (const gp of naveGaps){ if (gp.after <= r) g += gp.size; } return g; };
   const naveSegs = (NS.mode==="custom" && Array.isArray(NS.custom))
     ? sectionsCustom(NS.custom).segs
     : sectionsEqual(NS, nw, NS.edgeAisle, NS.edgeAisle);
-  for (let r=0;r<naveRows;r++){
-    const y0 = frontRowTopY + r*pitch;
+  // place rows front-to-back until the next row (plus its leg space) won't fit
+  let naveRows = 0;
+  for (let r=0; r<100000; r++){
+    const y0 = frontRowTopY + r*pitch + gapOffset(r);
+    if (y0 + pitch > naveBottom + 1e-9) break;
     for (const seg of naveSegs){
       const seats = segSeats(seg.size); if (seats<=0) continue;
       bars.push(makeBar(naveLeft+seg.start, y0, seg.size,0, 0,sD, seats));
     }
+    naveRows++;
   }
   const naveSeatsPerRow = sumSeats(naveSegs);
   const naveSecCount = naveSegs.length;
@@ -824,6 +858,8 @@ function buildControls(){
   }
   naveFs.appendChild(subheading("Seating / Aisles"));
   renderSeatingEditor(naveFs, cfg, "naveSeating", +cfg.naveWidth, "nave width", seatsMode);
+  naveFs.appendChild(subheading("Row gaps (cross-aisles)"));
+  naveFs.appendChild(renderRowGapsEditor(cfg, seatsMode));
   wrap.appendChild(naveFs);
 
   // TRANSEPT
@@ -872,6 +908,7 @@ function buildControls(){
 function setInputMode(cfg, mode){
   if (mode === cfg.inputMode){ buildControls(); return; }
   const sW = +cfg.seatWidth;
+  const pitch = (+cfg.seatDepth) + (+cfg.legSpace);
   if (mode === "seats"){
     // seed seat counts from the current geometry so the layout stays put
     const st = buildModel(cfg).stats;
@@ -879,6 +916,7 @@ function setInputMode(cfg, mode){
     cfg.transeptRows = st.tRows;
     seedSeatsFromDims(cfg.naveSeating, sW, st.naveSeatsPerRow);
     seedSeatsFromDims(cfg.transeptSeating, sW, st.tSeatsPerRow);
+    (cfg.naveRowGaps||[]).forEach(g=>{ g.afterRows = Math.max(0, Math.floor(Math.max(0,+g.atFeet||0)/pitch + 1e-9)); });
     cfg.inputMode = "seats";
   } else {
     // bake the seats-derived feet dimensions back into the feet fields
@@ -887,6 +925,7 @@ function setInputMode(cfg, mode){
     cfg.transeptWidth = round1(r.transeptWidth); cfg.transeptLength = round1(r.transeptLength);
     convertCustomUnits(cfg.naveSeating, sW, false);      // seats -> feet
     convertCustomUnits(cfg.transeptSeating, sW, false);
+    (cfg.naveRowGaps||[]).forEach(g=>{ g.atFeet = round1(Math.max(0, Math.round(+g.afterRows||0))*pitch); });
     cfg.inputMode = "dimensions";
   }
   buildControls(); refresh();
@@ -929,6 +968,51 @@ function seatsTotalText(s, sW){
                      .reduce((a,it)=>a+Math.max(0,Math.round(+it.width||0)),0);
   const feet = computeAlongRowFeet(s, sW, 0, 0);         // custom carries its own aisles
   return `Layout total: <b>${secSeats} seats</b> · <b>${round1(feet)} ft</b> across`;
+}
+
+/* ---- nave row-gap editor ---- */
+function renderRowGapsEditor(cfg, seatsMode){
+  if (!Array.isArray(cfg.naveRowGaps)) cfg.naveRowGaps = [];
+  const box = document.createElement("div"); box.className="custombox";
+  const list = document.createElement("div"); list.className="dndlist";
+  cfg.naveRowGaps.forEach((g,i)=> list.appendChild(rowGapItem(cfg, i, seatsMode)));
+  box.appendChild(list);
+
+  const btns = document.createElement("div"); btns.className="addbtns";
+  const add = document.createElement("button"); add.className="btn sm"; add.textContent="+ Row gap";
+  add.addEventListener("click",()=>{
+    const pitch = (+cfg.seatDepth) + (+cfg.legSpace);
+    const g = { size:4, atFeet:0, afterRows:0 };
+    if (seatsMode){ g.afterRows = Math.max(1, Math.round((+cfg.naveRows||0)/2)); g.atFeet = round1(g.afterRows*pitch); }
+    else { const half=(+cfg.naveLength||0)/2; g.atFeet = round1(half); g.afterRows = Math.max(1, Math.floor(half/pitch + 1e-9)); }
+    cfg.naveRowGaps.push(g); buildControls(); refresh();
+  });
+  btns.appendChild(add); box.appendChild(btns);
+
+  const hint = document.createElement("div"); hint.className="cust-hint";
+  hint.textContent = cfg.naveRowGaps.length
+    ? (seatsMode ? "Each gap opens a cross-aisle after the given number of rows."
+                 : "Each gap opens a cross-aisle at the given distance from the front row.")
+    : "No row gaps. Add one to open a cross-aisle partway down the nave.";
+  box.appendChild(hint);
+  return box;
+}
+function rowGapItem(cfg, i, seatsMode){
+  const g = cfg.naveRowGaps[i];
+  const posKey = seatsMode ? "afterRows" : "atFeet";
+  const posLabel = seatsMode ? "after rows" : "ft from front";
+  const posStep = seatsMode ? "1" : "0.5";
+  const row = document.createElement("div");
+  row.className = "dnditem is-aisle";
+  row.style.gridTemplateColumns = "auto 1fr 1fr auto";
+  row.innerHTML = `<span class="tag">Gap ${i+1}</span>
+    <span style="display:flex;align-items:center;gap:4px"><input type="number" class="gsize" value="${g.size}" step="0.5" min="0"><span class="unit">ft wide</span></span>
+    <span style="display:flex;align-items:center;gap:4px"><input type="number" class="gpos" value="${g[posKey]}" step="${posStep}" min="0"><span class="unit">${posLabel}</span></span>
+    <button class="del" title="Remove">×</button>`;
+  row.querySelector(".gsize").addEventListener("input", e=>{ g.size=+e.target.value; refresh(); });
+  row.querySelector(".gpos").addEventListener("input", e=>{ g[posKey]=+e.target.value; refresh(); });
+  row.querySelector(".del").addEventListener("click", ()=>{ cfg.naveRowGaps.splice(i,1); buildControls(); refresh(); });
+  return row;
 }
 
 function renderSeatingEditor(parent, cfg, key, target, axisLabel, seatsMode){
@@ -1181,6 +1265,11 @@ function mergeDefaults(c){
   merged.inputMode = c.inputMode==="seats" ? "seats" : "dimensions";
   merged.naveRows = intOr(c.naveRows, def.naveRows);
   merged.transeptRows = intOr(c.transeptRows, def.transeptRows);
+  merged.naveRowGaps = Array.isArray(c.naveRowGaps) ? c.naveRowGaps.map(g=>({
+    size: Math.max(0, numOr(g.size, 0)),
+    atFeet: Math.max(0, numOr(g.atFeet, 0)),
+    afterRows: Math.max(0, intOr(g.afterRows, 0)),
+  })) : [];
   merged.transeptDir = ["forward","toward","angled"].includes(c.transeptDir) ? c.transeptDir : def.transeptDir;
   merged.naveSeating = normalizeSeating(c.naveSeating,
     {sections:c.naveSections, edgeAisle:c.edgeAisle, centerAisle:c.centerAisle, nonCenterAisle:c.nonCenterAisle}, def.naveSeating);
