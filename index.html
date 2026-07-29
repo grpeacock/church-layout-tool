@@ -227,14 +227,18 @@
 
 /* ====================== configuration model ====================== */
 function defaultSeating(sections){
-  return { mode:"equal", sections:sections, edgeAisle:2, centerAisle:6, nonCenterAisle:4, custom:null };
+  return { mode:"equal", sections:sections, seatsPerSection:9, edgeAisle:2, centerAisle:6, nonCenterAisle:4, custom:null };
 }
 function defaultConfig(name){
   return {
     name: name || "Option A",
-    // dimensions
+    // input mode: "dimensions" (enter feet, seats derived) | "seats" (enter seats, feet derived)
+    inputMode: "dimensions",
+    // dimensions (feet)
     naveLength: 80, naveWidth: 40,
     transeptLength: 24, transeptWidth: 30, transeptDir: "toward", transeptFrontGap: 0,
+    // seats-first row counts (used when inputMode === "seats")
+    naveRows: 28, transeptRows: 8,
     // per-seat
     seatWidth: 1.6, seatDepth: 1.5, legSpace: 1.5,
     // altar
@@ -410,8 +414,75 @@ function buildAngledArm(pivot, angle, armRect, TS, sW, sD, pitch){
   return { bars, totalSeats, rows, maxSeatsPerRow, secCount: vSegs.length };
 }
 
+/* ====================== seats-first resolver ======================
+   In "seats" input mode the user enters row counts and per-section seat
+   counts; we convert those into the exact feet dimensions that make
+   buildModel reproduce them, then hand a plain "dimensions" config to the
+   unchanged model. This keeps both input sets independent and lossless. */
+function interAisleTotal(n, centerA, nonCenterA){
+  n = Math.max(1, Math.round(n));
+  if (n <= 1) return 0;
+  return (n % 2 === 0) ? centerA + nonCenterA*(n-2) : nonCenterA*(n-1);
+}
+// Along-row span (feet) a seating config occupies. edgeStart/edgeEnd are the
+// wall-side aisles to add (Equal mode); Custom lists carry their own aisles.
+function computeAlongRowFeet(seat, sW, edgeStart, edgeEnd){
+  if (seat.mode === "custom" && Array.isArray(seat.custom)){
+    return seat.custom.reduce((a,it)=>{
+      const w = Math.max(0, +it.width || 0);
+      return a + (it.type === "section" ? w*sW : w);   // section widths are in seats
+    }, 0);
+  }
+  const n = Math.max(1, Math.round(seat.sections));
+  const sps = Math.max(0, Math.round(seat.seatsPerSection));
+  return (+edgeStart) + (+edgeEnd) + n*sps*sW + interAisleTotal(n, +seat.centerAisle, +seat.nonCenterAisle);
+}
+// Copy a seating config with Custom section widths converted seats -> feet
+// (aisles stay feet) so the model's feet-based layout code works unchanged.
+function resolveSeatingToFeet(seat, sW){
+  if (seat.mode === "custom" && Array.isArray(seat.custom)){
+    return Object.assign({}, seat, {
+      custom: seat.custom.map(it => it.type === "section"
+        ? { type:"section", width: Math.max(0, +it.width||0) * sW }
+        : { type:"aisle",   width: Math.max(0, +it.width||0) })
+    });
+  }
+  return seat;
+}
+// Return a plain dimensions-mode config. Pass-through when already in
+// dimensions mode; otherwise derive every feet dimension from seat counts.
+function resolveConfig(cfg){
+  if (cfg.inputMode !== "seats") return cfg;
+  const sW=+cfg.seatWidth, sD=+cfg.seatDepth, leg=+cfg.legSpace, pitch=sD+leg;
+  const NS=cfg.naveSeating, TS=cfg.transeptSeating, dir=cfg.transeptDir;
+  const r = Object.assign({}, cfg);
+  r.inputMode = "dimensions";
+  r.naveSeating = resolveSeatingToFeet(NS, sW);
+  r.transeptSeating = resolveSeatingToFeet(TS, sW);
+
+  // transept: which axis holds rows vs. seats depends on the seat direction
+  if (dir === "angled"){                       // not cleanly invertible: keep feet
+    r.transeptLength = +cfg.transeptLength; r.transeptWidth = +cfg.transeptWidth;
+  } else if (dir === "forward"){               // rows stack across the width (depth)
+    const gap = Math.max(0, +cfg.transeptFrontGap || 0);
+    r.transeptWidth  = Math.max(0, Math.round(+cfg.transeptRows))*pitch + gap;
+    r.transeptLength = computeAlongRowFeet(TS, sW, +TS.edgeAisle, 0);   // one outer edge aisle
+  } else {                                     // "toward": rows stack along the arm length
+    r.transeptLength = Math.max(0, Math.round(+cfg.transeptRows))*pitch;
+    r.transeptWidth  = computeAlongRowFeet(TS, sW, +TS.edgeAisle, +TS.edgeAisle);
+  }
+
+  // nave: seats run across the width, rows stack down the length
+  r.naveWidth = computeAlongRowFeet(NS, sW, +NS.edgeAisle, +NS.edgeAisle);
+  const halfTW = r.transeptWidth/2;
+  const frontRowTopY = (-(+cfg.altarDistance)) + (+cfg.altarDepth)/2 + (+cfg.frontToAltar || 0);
+  r.naveLength = Math.max(0, Math.max(0, Math.round(+cfg.naveRows))*pitch + frontRowTopY - halfTW);
+  return r;
+}
+
 /* ====================== core model ====================== */
 function buildModel(cfg){
+  cfg = resolveConfig(cfg);
   const nw=+cfg.naveWidth, nl=+cfg.naveLength;
   const tw=+cfg.transeptWidth, tl=+cfg.transeptLength;
   const sW=+cfg.seatWidth, sD=+cfg.seatDepth, leg=+cfg.legSpace;
@@ -675,14 +746,16 @@ function customHasUnequalSections(list){
   return false;
 }
 function newSectionWidth(s, target){ const rem=target-customTotal(s.custom); return rem>1?round1(rem):12; }
-function makeCustomFromEqual(s, target){
+function makeCustomFromEqual(s, target, seatsMode){
   const n=Math.max(1,Math.round(s.sections));
+  // section width unit depends on input mode: seats (seats mode) or feet (dimensions)
   const lay=layoutSections(target, n, +s.centerAisle, +s.nonCenterAisle, +s.edgeAisle);
-  const size = lay.size>0 ? lay.size : Math.max(1, round1(target/(n*2)));
+  const feetSize = lay.size>0 ? lay.size : Math.max(1, round1(target/(n*2)));
+  const secWidth = seatsMode ? Math.max(1, Math.round(s.seatsPerSection||1)) : round1(feetSize);
   const list=[];
   if (+s.edgeAisle>0) list.push({type:"aisle", width:round1(+s.edgeAisle)});
   for (let i=0;i<n;i++){
-    list.push({type:"section", width:round1(size)});
+    list.push({type:"section", width:secWidth});
     if (i<n-1){
       const isCenter=(n%2===0)&&(i===n/2-1);
       list.push({type:"aisle", width:round1(isCenter?+s.centerAisle:+s.nonCenterAisle)});
@@ -725,34 +798,58 @@ function buildControls(){
   const wrap = document.getElementById("controls");
   wrap.innerHTML="";
 
-  // tab name
+  const seatsMode = cfg.inputMode === "seats";
+
+  // tab name + input mode
   const nameFs=fieldset("Tab");
   const nameRow=document.createElement("div"); nameRow.className="field full";
   nameRow.innerHTML=`<input type="text" value="${escapeHtml(cfg.name)}">`;
   nameRow.querySelector("input").addEventListener("input",e=>{ cfg.name=e.target.value; buildTabs(); refresh(); });
-  nameFs.appendChild(nameRow); wrap.appendChild(nameFs);
+  nameFs.appendChild(nameRow);
+  nameFs.appendChild(selectField(cfg,"inputMode","Input mode",
+    [["dimensions","Dimensions → seats"],["seats","Seats → dimensions"]],
+    v=>{ setInputMode(cfg, v); }));
+  nameFs.appendChild(inputModeHint(seatsMode));
+  wrap.appendChild(nameFs);
 
   // NAVE
   const naveFs=fieldset("Nave");
   naveFs.appendChild(subheading("Dimensions"));
-  naveFs.appendChild(numField(cfg,"naveLength",NUM.naveLength));
-  naveFs.appendChild(numField(cfg,"naveWidth",NUM.naveWidth));
+  if (seatsMode){
+    naveFs.appendChild(numField(cfg,"naveRows",{l:"Rows", min:0, step:1, int:true}));
+    naveFs.appendChild(dimReadout("naveDimReadout", cfg));
+  } else {
+    naveFs.appendChild(numField(cfg,"naveLength",NUM.naveLength));
+    naveFs.appendChild(numField(cfg,"naveWidth",NUM.naveWidth));
+  }
   naveFs.appendChild(subheading("Seating / Aisles"));
-  renderSeatingEditor(naveFs, cfg, "naveSeating", +cfg.naveWidth, "nave width");
+  renderSeatingEditor(naveFs, cfg, "naveSeating", +cfg.naveWidth, "nave width", seatsMode);
   wrap.appendChild(naveFs);
 
   // TRANSEPT
   const tFs=fieldset("Transept");
   tFs.appendChild(subheading("Dimensions"));
-  tFs.appendChild(numField(cfg,"transeptLength",NUM.transeptLength));
-  tFs.appendChild(numField(cfg,"transeptWidth",NUM.transeptWidth));
   tFs.appendChild(selectField(cfg,"transeptDir","Transept seat direction",
     [["forward","Forward (face altar end)"],["toward","Toward crossing"],["angled","Angled at altar"]],
     v=>{ cfg.transeptDir=v; buildControls(); refresh(); }));
-  tFs.appendChild(numField(cfg,"transeptFrontGap",NUM.transeptFrontGap));
-  tFs.appendChild(subheading("Seating / Aisles"));
   const tForward = cfg.transeptDir==="forward";
-  renderSeatingEditor(tFs, cfg, "transeptSeating", tForward?+cfg.transeptLength:+cfg.transeptWidth, tForward?"transept length":"transept width");
+  const tAngled  = cfg.transeptDir==="angled";
+  if (seatsMode && !tAngled){
+    tFs.appendChild(numField(cfg,"transeptRows",{l:tForward?"Rows per arm (depth)":"Rows per arm", min:0, step:1, int:true}));
+    if (tForward) tFs.appendChild(numField(cfg,"transeptFrontGap",NUM.transeptFrontGap));
+    tFs.appendChild(dimReadout("transeptDimReadout", cfg));
+  } else {
+    tFs.appendChild(numField(cfg,"transeptLength",NUM.transeptLength));
+    tFs.appendChild(numField(cfg,"transeptWidth",NUM.transeptWidth));
+    tFs.appendChild(numField(cfg,"transeptFrontGap",NUM.transeptFrontGap));
+    if (seatsMode && tAngled){
+      const note=document.createElement("div"); note.className="cust-hint";
+      note.textContent="Angled transepts vary row length, so their size stays in feet even in seats mode.";
+      tFs.appendChild(note);
+    }
+  }
+  tFs.appendChild(subheading("Seating / Aisles"));
+  renderSeatingEditor(tFs, cfg, "transeptSeating", tForward?+cfg.transeptLength:+cfg.transeptWidth, tForward?"transept length":"transept width", seatsMode && !tAngled);
   wrap.appendChild(tFs);
 
   // PER-SEAT
@@ -771,25 +868,89 @@ function buildControls(){
   wrap.appendChild(aFs);
 }
 
-function renderSeatingEditor(parent, cfg, key, target, axisLabel){
+/* ---- seats-first UI helpers ---- */
+function setInputMode(cfg, mode){
+  if (mode === cfg.inputMode){ buildControls(); return; }
+  const sW = +cfg.seatWidth;
+  if (mode === "seats"){
+    // seed seat counts from the current geometry so the layout stays put
+    const st = buildModel(cfg).stats;
+    cfg.naveRows = st.naveRows;
+    cfg.transeptRows = st.tRows;
+    seedSeatsFromDims(cfg.naveSeating, sW, st.naveSeatsPerRow);
+    seedSeatsFromDims(cfg.transeptSeating, sW, st.tSeatsPerRow);
+    cfg.inputMode = "seats";
+  } else {
+    // bake the seats-derived feet dimensions back into the feet fields
+    const r = resolveConfig(cfg);
+    cfg.naveWidth = round1(r.naveWidth); cfg.naveLength = round1(r.naveLength);
+    cfg.transeptWidth = round1(r.transeptWidth); cfg.transeptLength = round1(r.transeptLength);
+    convertCustomUnits(cfg.naveSeating, sW, false);      // seats -> feet
+    convertCustomUnits(cfg.transeptSeating, sW, false);
+    cfg.inputMode = "dimensions";
+  }
+  buildControls(); refresh();
+}
+function seedSeatsFromDims(seat, sW, seatsPerRow){
+  if (seat.mode === "custom" && Array.isArray(seat.custom)){
+    convertCustomUnits(seat, sW, true);                  // feet -> seats
+  } else {
+    const n = Math.max(1, Math.round(seat.sections));
+    seat.seatsPerSection = Math.max(1, Math.round((seatsPerRow||0)/n) || seat.seatsPerSection || 1);
+  }
+}
+function convertCustomUnits(seat, sW, toSeats){
+  if (!(seat.mode === "custom" && Array.isArray(seat.custom))) return;
+  seat.custom = seat.custom.map(it => it.type === "section"
+    ? { type:"section", width: toSeats ? Math.max(0, Math.round((+it.width||0)/sW))
+                                       : round1(Math.max(0, +it.width||0) * sW) }
+    : { type:"aisle", width: round1(Math.max(0, +it.width||0)) });
+}
+function inputModeHint(seatsMode){
+  const d = document.createElement("div"); d.className = "cust-hint";
+  d.textContent = seatsMode
+    ? "Enter rows and seats-per-section; nave/transept dimensions are computed."
+    : "Enter dimensions in feet; seat counts are computed.";
+  return d;
+}
+function dimReadout(id, cfg){
+  const d = document.createElement("div"); d.className = "cust-total"; d.id = id;
+  d.innerHTML = dimReadoutHtml(id, cfg);
+  return d;
+}
+function dimReadoutHtml(id, cfg){
+  const r = resolveConfig(cfg);
+  if (id === "naveDimReadout")
+    return `Computed nave: <b>${round1(r.naveWidth)}′</b> wide × <b>${round1(r.naveLength)}′</b> long`;
+  return `Computed transept (per arm): <b>${round1(r.transeptWidth)}′</b> × <b>${round1(r.transeptLength)}′</b>`;
+}
+function seatsTotalText(s, sW){
+  const secSeats = (s.custom||[]).filter(it=>it.type==="section")
+                     .reduce((a,it)=>a+Math.max(0,Math.round(+it.width||0)),0);
+  const feet = computeAlongRowFeet(s, sW, 0, 0);         // custom carries its own aisles
+  return `Layout total: <b>${secSeats} seats</b> · <b>${round1(feet)} ft</b> across`;
+}
+
+function renderSeatingEditor(parent, cfg, key, target, axisLabel, seatsMode){
   const s = cfg[key];
   parent.appendChild(selectField(s, "mode", "Seat Section Widths",
     [["equal","Equal"],["custom","Custom"]],
-    v=> onSeatingModeChange(cfg, key, v, target)));
+    v=> onSeatingModeChange(cfg, key, v, target, seatsMode)));
   if (s.mode === "equal"){
     parent.appendChild(numField(s,"sections",{l:"Sections", min:1, step:1, int:true}));
+    if (seatsMode) parent.appendChild(numField(s,"seatsPerSection",{l:"Seats per section", min:1, step:1, int:true}));
     parent.appendChild(numField(s,"edgeAisle",{l:"Edge aisle (by walls)", min:0, step:0.5}));
     parent.appendChild(numField(s,"centerAisle",{l:"Center aisle (even #)", min:0, step:0.5}));
     parent.appendChild(numField(s,"nonCenterAisle",{l:"Between-section aisle", min:0, step:0.5}));
   } else {
-    parent.appendChild(renderCustomEditor(cfg, key, target, axisLabel));
+    parent.appendChild(renderCustomEditor(cfg, key, target, axisLabel, seatsMode));
   }
 }
 
-function onSeatingModeChange(cfg, key, v, target){
+function onSeatingModeChange(cfg, key, v, target, seatsMode){
   const s = cfg[key];
   if (v === "custom"){
-    if (!Array.isArray(s.custom) || s.custom.length === 0) s.custom = makeCustomFromEqual(s, target);
+    if (!Array.isArray(s.custom) || s.custom.length === 0) s.custom = makeCustomFromEqual(s, target, seatsMode);
     s.mode = "custom";
   } else {
     if (Array.isArray(s.custom) && customHasUnequalSections(s.custom)){
@@ -801,20 +962,21 @@ function onSeatingModeChange(cfg, key, v, target){
   buildControls(); refresh();
 }
 
-function renderCustomEditor(cfg, key, target, axisLabel){
+function renderCustomEditor(cfg, key, target, axisLabel, seatsMode){
   const s = cfg[key];
   const box = document.createElement("div"); box.className="custombox";
 
   const totalDiv = document.createElement("div"); totalDiv.className="cust-total";
-  const updateTotal = ()=>{ totalDiv.innerHTML = totalText(customTotal(s.custom), target, axisLabel); };
+  const updateTotal = ()=>{ totalDiv.innerHTML = seatsMode ? seatsTotalText(s, +cfg.seatWidth) : totalText(customTotal(s.custom), target, axisLabel); };
 
   const list = document.createElement("div"); list.className="dndlist";
-  s.custom.forEach((it,i)=> list.appendChild(customItemRow(cfg, key, i, updateTotal)));
+  s.custom.forEach((it,i)=> list.appendChild(customItemRow(cfg, key, i, updateTotal, seatsMode)));
   box.appendChild(list);
 
   const btns = document.createElement("div"); btns.className="addbtns";
   const addSec=document.createElement("button"); addSec.className="btn sm"; addSec.textContent="+ Section";
-  addSec.addEventListener("click",()=>{ s.custom.push({type:"section", width:newSectionWidth(s,target)}); buildControls(); refresh(); });
+  const secDefault = seatsMode ? Math.max(1, Math.round(s.seatsPerSection||6)) : newSectionWidth(s,target);
+  addSec.addEventListener("click",()=>{ s.custom.push({type:"section", width:secDefault}); buildControls(); refresh(); });
   const addAisle=document.createElement("button"); addAisle.className="btn sm"; addAisle.textContent="+ Aisle";
   addAisle.addEventListener("click",()=>{ s.custom.push({type:"aisle", width:4}); buildControls(); refresh(); });
   btns.appendChild(addSec); btns.appendChild(addAisle);
@@ -824,19 +986,22 @@ function renderCustomEditor(cfg, key, target, axisLabel){
   box.appendChild(totalDiv);
 
   const hint=document.createElement("div"); hint.className="cust-hint";
-  hint.textContent = "Order runs across the "+axisLabel+"; drag ⋮⋮ to reorder. Transept layouts mirror to both arms.";
+  hint.textContent = (seatsMode ? "Section widths are in seats, aisles in feet. " : "")
+    + "Order runs across the "+axisLabel+"; drag ⋮⋮ to reorder. Transept layouts mirror to both arms.";
   box.appendChild(hint);
   return box;
 }
 
-function customItemRow(cfg, key, i, updateTotal){
+function customItemRow(cfg, key, i, updateTotal, seatsMode){
   const s = cfg[key]; const it = s.custom[i];
+  const isSec = it.type==="section";
+  const seatUnit = seatsMode && isSec;
   const row = document.createElement("div");
-  row.className = "dnditem " + (it.type==="section" ? "is-section" : "is-aisle");
+  row.className = "dnditem " + (isSec ? "is-section" : "is-aisle");
   row.innerHTML = `<span class="grip" title="Drag to reorder">⋮⋮</span>
-    <span class="tag">${it.type==="section"?"Section":"Aisle"}</span>
-    <input type="number" value="${it.width}" step="0.5" min="0">
-    <span class="unit">ft</span>
+    <span class="tag">${isSec?"Section":"Aisle"}</span>
+    <input type="number" value="${it.width}" step="${seatUnit?"1":"0.5"}" min="0">
+    <span class="unit">${seatUnit?"seats":"ft"}</span>
     <button class="del" title="Remove">×</button>`;
 
   row.querySelector("input").addEventListener("input", e=>{ it.width=+e.target.value; updateTotal(); refresh(); });
@@ -934,6 +1099,12 @@ function refresh(){
   if (state.view === "summary"){ renderSummary(); return; }
   const stats = renderEditCanvas();
   renderStats(stats);
+  // keep seats-mode "computed dimensions" readouts in sync with edits
+  const cfg = state.tabs[state.active];
+  const nr = document.getElementById("naveDimReadout");
+  if (nr) nr.innerHTML = dimReadoutHtml("naveDimReadout", cfg);
+  const tr = document.getElementById("transeptDimReadout");
+  if (tr) tr.innerHTML = dimReadoutHtml("transeptDimReadout", cfg);
 }
 // Size the editing canvas to fill its container, then draw the active tab.
 function renderEditCanvas(){
@@ -983,10 +1154,11 @@ function sanitizeCustom(list){
              .map(it=>({type:it.type, width:Math.max(0, numOr(it.width,0))}));
 }
 function normalizeSeating(seat, legacy, def){
-  const out={ mode:"equal", sections:def.sections, edgeAisle:def.edgeAisle, centerAisle:def.centerAisle, nonCenterAisle:def.nonCenterAisle, custom:null };
+  const out={ mode:"equal", sections:def.sections, seatsPerSection:def.seatsPerSection, edgeAisle:def.edgeAisle, centerAisle:def.centerAisle, nonCenterAisle:def.nonCenterAisle, custom:null };
   if (seat && typeof seat==="object"){
     out.mode = seat.mode==="custom" ? "custom" : "equal";
     out.sections = intOr(seat.sections, def.sections);
+    out.seatsPerSection = intOr(seat.seatsPerSection, def.seatsPerSection);
     out.edgeAisle = numOr(seat.edgeAisle, def.edgeAisle);
     out.centerAisle = numOr(seat.centerAisle, def.centerAisle);
     out.nonCenterAisle = numOr(seat.nonCenterAisle, def.nonCenterAisle);
@@ -1006,6 +1178,9 @@ function mergeDefaults(c){
   const def=defaultConfig(typeof c.name==="string" && c.name ? c.name : "Option A");
   const merged=Object.assign({}, def, c);
   merged.name = (typeof c.name==="string" && c.name) ? c.name : def.name;
+  merged.inputMode = c.inputMode==="seats" ? "seats" : "dimensions";
+  merged.naveRows = intOr(c.naveRows, def.naveRows);
+  merged.transeptRows = intOr(c.transeptRows, def.transeptRows);
   merged.transeptDir = ["forward","toward","angled"].includes(c.transeptDir) ? c.transeptDir : def.transeptDir;
   merged.naveSeating = normalizeSeating(c.naveSeating,
     {sections:c.naveSections, edgeAisle:c.edgeAisle, centerAisle:c.centerAisle, nonCenterAisle:c.nonCenterAisle}, def.naveSeating);
