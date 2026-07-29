@@ -36,6 +36,12 @@
   .canvas-wrap canvas{touch-action:none}
   fieldset{border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px}
   legend{font-weight:650;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 6px}
+  legend.fs-legend{cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:7px}
+  legend.fs-legend:hover{color:var(--accent)}
+  .fs-toggle{border:0;background:none;padding:0;margin:0;cursor:pointer;color:inherit;font-size:11px;line-height:1;transition:transform .15s}
+  fieldset.collapsed .fs-toggle{transform:rotate(-90deg)}
+  fieldset.collapsed{padding-top:8px;padding-bottom:8px}
+  fieldset.collapsed > :not(legend){display:none}
   .subhead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin:11px 0 5px;border-bottom:1px dotted var(--line);padding-bottom:3px}
   .subhead:first-child{margin-top:2px}
   .field{display:grid;grid-template-columns:1fr 84px;gap:8px;align-items:center;margin:7px 0}
@@ -271,7 +277,7 @@ const NUM = {
 const SIMPLE_NUM_KEYS = Object.keys(NUM);
 
 /* ====================== state ====================== */
-const state = { tabs: [], viewports: [], active: 0, view: "edit", sidebar: "open" };  // view: "edit" | "summary"; sidebar: "open" | "collapsed"
+const state = { tabs: [], viewports: [], active: 0, view: "edit", sidebar: "open", collapsed: {} };  // view: "edit" | "summary"; sidebar: "open" | "collapsed"; collapsed: section title -> bool
 function defaultViewport(){ return { zoom:1, panX:0, panY:0 }; }
 function activeVP(){ return state.viewports[state.active] || (state.viewports[state.active] = defaultViewport()); }
 let dragState = null;  // { key, from } during a drag-reorder
@@ -800,7 +806,23 @@ function makeCustomFromEqual(s, target, seatsMode){
 }
 
 /* ====================== controls ====================== */
-function fieldset(title){ const fs=document.createElement("fieldset"); const lg=document.createElement("legend"); lg.textContent=title; fs.appendChild(lg); return fs; }
+function fieldset(title){
+  const fs=document.createElement("fieldset");
+  if (state.collapsed[title]) fs.classList.add("collapsed");
+  const lg=document.createElement("legend"); lg.className="fs-legend";
+  lg.title="Click to minimize / expand";
+  const btn=document.createElement("button"); btn.type="button"; btn.className="fs-toggle";
+  btn.setAttribute("aria-label","Minimize or expand section"); btn.textContent="▾";
+  lg.appendChild(btn);
+  lg.appendChild(document.createTextNode(title));
+  lg.addEventListener("click",()=>{
+    const now=!fs.classList.contains("collapsed");
+    fs.classList.toggle("collapsed", now);
+    state.collapsed[title]=now;
+  });
+  fs.appendChild(lg);
+  return fs;
+}
 function subheading(t){ const d=document.createElement("div"); d.className="subhead"; d.textContent=t; return d; }
 
 function numField(obj, key, meta){
